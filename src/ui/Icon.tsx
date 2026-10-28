@@ -35,6 +35,14 @@ export default function Icon({ name, size = 19 }: { name: string; size?: number 
     keyboard: <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 15h10" /></>,
     device: <><rect x="3" y="3" width="18" height="13" rx="2" /><path d="M8 21h8M12 16v5" /></>,
     search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></>,
+    align: <><path d="M4 3v18" /><rect x="8" y="5" width="12" height="5" rx="1" /><rect x="8" y="14" width="7" height="5" rx="1" /></>,
+    'align-left': <><path d="M4 3v18" /><rect x="8" y="5" width="12" height="5" rx="1" /><rect x="8" y="14" width="7" height="5" rx="1" /></>,
+    'align-centerX': <><path d="M12 2v20" /><rect x="4" y="5" width="16" height="5" rx="1" /><rect x="8" y="14" width="8" height="5" rx="1" /></>,
+    'align-right': <><path d="M20 3v18" /><rect x="4" y="5" width="12" height="5" rx="1" /><rect x="9" y="14" width="7" height="5" rx="1" /></>,
+    'align-top': <><path d="M3 4h18" /><rect x="5" y="8" width="5" height="12" rx="1" /><rect x="14" y="8" width="5" height="7" rx="1" /></>,
+    'align-centerY': <><path d="M2 12h20" /><rect x="5" y="4" width="5" height="16" rx="1" /><rect x="14" y="8" width="5" height="8" rx="1" /></>,
+    'align-bottom': <><path d="M3 20h18" /><rect x="5" y="4" width="5" height="12" rx="1" /><rect x="14" y="9" width="5" height="7" rx="1" /></>,
+    magnet: <><path d="M4 4v9a8 8 0 0 0 16 0V4h-5v9a3 3 0 0 1-6 0V4zM4 8h5m6 0h5" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name] ?? paths.logo}</svg>;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { DESIGN_FONTS, type DesignDocument, type DesignElement, type DesignElementBase, type DesignFont, type DesignPage } from '../core/model';
+import type { AlignmentKind } from '../core/alignment';
 import Icon from './Icon';
 
 export type ElementPatch = Partial<DesignElementBase> & { fill?: string; text?: string; fontSize?: number; fontFamily?: DesignFont; fontWeight?: 400 | 700; textAlign?: 'left' | 'center' | 'right'; letterSpacing?: number; borderRadius?: number };
@@ -24,13 +25,18 @@ interface Props {
   tab: 'edit' | 'layers'; disabled: boolean;
   onTab: (tab: 'edit' | 'layers') => void; onClose: () => void; onSelect: (id: string | null) => void;
   onChange: (patch: ElementPatch, id?: string) => void; onDuplicate: () => void; onRemove: () => void; onReorder: (direction: number) => void;
+  snapping: boolean; alignmentBusy: boolean; onSnapping: (enabled: boolean) => void; onAlign: (kind: AlignmentKind, referenceId: string | null) => void;
   onPage: (patch: Partial<Pick<DesignPage, 'name' | 'background'>>) => void;
   onSize: (width: number, height: number) => void;
 }
 const PALETTE = ['#7568ED', '#171A23', '#FFFFFF', '#C9BFFF', '#FF957A', '#FFE477', '#CBE99C', '#087F8C'];
 
-export default function Inspector({ document, page, selected, selectedId, tab, disabled, onTab, onClose, onSelect, onChange, onDuplicate, onRemove, onReorder, onPage, onSize }: Props) {
+export default function Inspector({ document, page, selected, selectedId, tab, disabled, snapping, alignmentBusy, onSnapping, onAlign, onTab, onClose, onSelect, onChange, onDuplicate, onRemove, onReorder, onPage, onSize }: Props) {
+  const [alignmentReference, setAlignmentReference] = useState('page');
+  const references = page.elements.filter(element => element.id !== selectedId && element.visible && element.opacity > 0);
+  const referenceId = references.some(element => element.id === alignmentReference) ? alignmentReference : 'page';
   const editable = !disabled && !selected?.locked;
+  const alignable = editable && !alignmentBusy && Boolean(selected?.visible) && (selected?.opacity ?? 0) > 0;
   return <aside className="inspector" aria-label="Properties and layers">
     <div className="panel-heading"><strong>{tab === 'layers' ? 'Layers' : selected ? 'Edit element' : 'Page settings'}</strong><button className="icon-button" onClick={onClose} aria-label="Close properties"><Icon name="close" /></button></div>
     <div className="panel-tabs" role="group" aria-label="Inspector view"><button aria-pressed={tab === 'edit'} onClick={() => onTab('edit')}><Icon name="settings" size={16} />Edit</button><button aria-pressed={tab === 'layers'} onClick={() => onTab('layers')}><Icon name="layers" size={16} />Layers <small>{page.elements.length}</small></button></div>
@@ -39,6 +45,12 @@ export default function Inspector({ document, page, selected, selectedId, tab, d
         <label>Layer name<input value={selected.name} maxLength={160} placeholder="For example: Main headline" disabled={disabled} onChange={event => onChange({ name: event.target.value })} /></label>
         <div className="action-row"><button className="icon-button" aria-label={selected.locked ? 'Unlock element' : 'Lock element'} title={selected.locked ? 'Unlock element' : 'Lock element'} disabled={disabled} onClick={() => onChange({ locked: !selected.locked })}><Icon name={selected.locked ? 'lock' : 'unlock'} /></button><button className="icon-button" title="Duplicate element" aria-label="Duplicate element" disabled={!editable} onClick={onDuplicate}><Icon name="duplicate" /></button><button className="icon-button" title="Bring forward" aria-label="Bring forward" disabled={!editable} onClick={() => onReorder(1)}><Icon name="up" /></button><button className="icon-button" title="Send backward" aria-label="Send backward" disabled={!editable} onClick={() => onReorder(-1)}><Icon name="down" /></button><button className="icon-button danger" title="Delete element" aria-label="Delete element" disabled={!editable} onClick={onRemove}><Icon name="trash" /></button></div>
         {selected.locked && <p className="help">Unlock this layer to change its appearance or position.</p>}
+        <section className="alignment-controls" aria-label="Element alignment">
+          <label>Align to<select aria-label="Alignment reference" value={referenceId} disabled={!alignable} onChange={event => setAlignmentReference(event.target.value)}><option value="page">Page</option>{references.map(element => <option key={element.id} value={element.id}>{element.name || 'Untitled layer'} ({element.type})</option>)}</select></label>
+          <div className="alignment-actions" role="group" aria-label="Align element">{([{ kind: 'left', label: 'Align left' }, { kind: 'centerX', label: 'Align horizontal centers' }, { kind: 'right', label: 'Align right' }, { kind: 'top', label: 'Align top' }, { kind: 'centerY', label: 'Align vertical centers' }, { kind: 'bottom', label: 'Align bottom' }] as const).map(action => <button className="icon-button" key={action.kind} title={action.label} aria-label={action.label} disabled={!alignable} onClick={() => onAlign(action.kind, referenceId === 'page' ? null : referenceId)}><Icon name={`align-${action.kind}`} size={19} /></button>)}</div>
+          <button className="button snap-preference" aria-pressed={snapping} onClick={() => onSnapping(!snapping)}><Icon name="magnet" size={16} />Snap guides {snapping ? 'on' : 'off'}</button>
+          <p className="help">Drag near another element to match its edges or centers. Hold Alt to move freely. Rotated elements align by their outer bounds.</p>
+        </section>
         {selected.type === 'text' && <>
           <label>Text<textarea value={selected.text} maxLength={5000} rows={3} placeholder="Write your message…" disabled={!editable} onChange={event => onChange({ text: event.target.value })} /></label>
           <label>Font<select value={selected.fontFamily} disabled={!editable} onChange={event => onChange({ fontFamily: event.target.value as DesignFont })}>{DESIGN_FONTS.map(font => <option key={font}>{font}</option>)}</select></label>

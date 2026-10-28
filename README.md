@@ -9,6 +9,7 @@ A local-first browser editor for social posts, posters and carousels. Built with
 - Create designs with multiple pages, text, rectangles, ellipses and uploaded images.
 - Select, resize, rotate, arrange, duplicate, hide and lock elements.
 - Pan and zoom the workspace, use keyboard shortcuts, and undo or redo edits.
+- Snap to other elements' edges and centers while dragging, or align to a page or reference layer with six alignment controls. Hold Alt to bypass snapping.
 - Save projects in a browser library with autosave.
 - Download and reopen editable `.design.json` projects with images embedded.
 - Export PNG, JPEG or SVG, or download all pages in a ZIP.
@@ -54,6 +55,12 @@ Raster exports are available at 1× and 2×, within the export size limit. JPEG 
 Exporting SVG does not provide SVG re-import or native Illustrator `.ai` editing. Flattened artwork stays a single image element; the editor does not automatically separate it into text and objects.
 
 See [Project format](docs/PROJECT-FORMAT.md) for the file structure and limits.
+
+## Align elements
+
+Select an element and use the **Align element** icon to open its alignment controls. Choose the page or a visible reference layer, then align left, right, top, bottom, or either center. Locked reference layers stay in place.
+
+Dragging also snaps to nearby edges and centers, with temporary guides. The magnet button toggles snapping; hold **Alt** during a drag to bypass it. Guides are editor overlays and do not appear in saved projects or exports.
 
 ## Project structure
 

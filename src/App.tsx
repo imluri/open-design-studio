@@ -5,6 +5,7 @@ import { createProject, TEMPLATES } from './core/templates';
 import { getProject, listProjects, saveProject } from './core/storage';
 import { parseProjectFile, projectBlob } from './core/project-files';
 import { designFilename, downloadBlob, exportPage, exportPages, importImage, pageObjects, readCanvasPage, type LayerObject } from './core/canvas';
+import { alignmentDelta, attachAlignmentGuides, getObjectBounds, type AlignmentGuide, type AlignmentKind } from './core/alignment';
 import useCanvasViewport from './ui/useCanvasViewport';
 import Inspector, { NumberField, type ElementPatch } from './ui/Inspector';
 import PageStrip from './ui/PageStrip';
@@ -35,6 +36,8 @@ export default function App() {
   const [dirty, setDirty] = useState(false), [status, setStatus] = useState('Loading local projects…');
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [message, setMessage] = useState('');
   const [canvasFailed, setCanvasFailed] = useState(false);
+  const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
+  const [snapping, setSnapping] = useState(() => { try { return localStorage.getItem('ods:snapping') !== 'off'; } catch { return true; } });
   const [panel, setPanel] = useState<Panel>('templates'), [panelOpen, setPanelOpen] = useState(false);
   const [inspector, setInspector] = useState(false), [inspectorTab, setInspectorTab] = useState<'edit' | 'layers'>('edit');
   const [projects, setProjects] = useState<ProjectSummary[]>([]), [query, setQuery] = useState('');
@@ -52,6 +55,8 @@ export default function App() {
   const disabled = Boolean(busy) || !started;
   const viewport = useCanvasViewport({ stage, canvas, ready, width: document.width, height: document.height, pageId: page.id, disabled: disabled || rendering });
   const refreshLayout = viewport.refreshLayout;
+  const alignmentRuntime = useRef({ snapping, scale: viewport.scale, blocked: disabled || rendering || viewport.handTool || viewport.panning });
+  alignmentRuntime.current = { snapping, scale: viewport.scale, blocked: disabled || rendering || viewport.handTool || viewport.panning };
 
   function markDirty() { generation.current++; dirtyRef.current = true; setDirty(true); setStatus('Unsaved changes'); }
   function capture(): DesignDocument {
@@ -112,6 +117,30 @@ export default function App() {
     if (index < 0 || elements[index].locked) return;
     const target = Math.max(0, Math.min(elements.length - 1, index + direction));
     if (target === index) return; const [item] = elements.splice(index, 1); elements.splice(target, 0, item); commit(next);
+  }
+  function alignElement(kind: AlignmentKind, referenceId: string | null) {
+    if (disabled || renderingRef.current || viewport.isInteracting() || !canvas.current) return;
+    settleText();
+    if (renderedDocument.current !== projectRef.current.document || renderedPageId.current !== projectRef.current.document.pages[pageRef.current]?.id) return;
+    const instance = canvas.current, next = copyDocument(capture()), elements = next.pages[pageRef.current].elements;
+    const element = elements.find(item => item.id === selectionRef.current);
+    const target = (instance.getObjects() as LayerObject[]).find(object => object.studioId === element?.id);
+    if (!element || element.locked || !element.visible || element.opacity <= 0 || !target) return;
+    let reference = { left: 0, top: 0, width: next.width, height: next.height };
+    if (referenceId !== null) {
+      const source = elements.find(item => item.id === referenceId && item.id !== element.id && item.visible && item.opacity > 0);
+      const object = (instance.getObjects() as LayerObject[]).find(item => item.studioId === source?.id);
+      if (!source || !object) { setError('Choose a visible layer to align to.'); return; }
+      reference = getObjectBounds(object);
+    }
+    const delta = alignmentDelta(getObjectBounds(target), reference, kind);
+    element.x = Math.round((element.x + delta.x) * 100) / 100;
+    element.y = Math.round((element.y + delta.y) * 100) / 100;
+    setAlignmentGuides([]); commit(next);
+  }
+  function showAlignment() {
+    setInspectorTab('edit'); setInspector(true);
+    if (window.innerWidth <= 760) setPanelOpen(false);
   }
   function undo(redo = false) {
     if (disabled || renderingRef.current) return;
@@ -239,6 +268,17 @@ export default function App() {
     return () => { renderVersion.current++; };
   }, [document, pageIndex, ready, refreshLayout]);
   useEffect(() => {
+    const instance = canvas.current; if (!ready || !instance) return;
+    return attachAlignmentGuides(instance, {
+      isEnabled: () => alignmentRuntime.current.snapping,
+      isBlocked: () => alignmentRuntime.current.blocked || renderingRef.current || Boolean(busyRef.current),
+      getScale: () => alignmentRuntime.current.scale,
+      getPageSize: () => ({ width: projectRef.current.document.width, height: projectRef.current.document.height }),
+      onGuides: setAlignmentGuides,
+    });
+  }, [ready]);
+  useEffect(() => { setAlignmentGuides([]); }, [document, page.id, viewport.scale, viewport.handTool, viewport.panning, snapping]);
+  useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
@@ -263,6 +303,7 @@ export default function App() {
     return () => { window.removeEventListener('beforeunload', unload); window.document.removeEventListener('visibilitychange', visibility); };
   }, []);
   useEffect(() => { try { localStorage.setItem('ods:theme', theme); } catch { /* Optional preference. */ } }, [theme]);
+  useEffect(() => { try { localStorage.setItem('ods:snapping', snapping ? 'on' : 'off'); } catch { /* Optional preference. */ } }, [snapping]);
   useEffect(() => {
     const outside = (event: PointerEvent) => { for (const menu of [fileMenu.current, exportMenu.current]) if (menu?.open && !menu.contains(event.target as Node)) menu.open = false; };
     window.document.addEventListener('pointerdown', outside); return () => window.document.removeEventListener('pointerdown', outside);
@@ -321,15 +362,15 @@ export default function App() {
       <main className="editing-area" aria-label="Design workspace">
         <div className="canvas-actions"><button className="icon-button" title="Edit properties" aria-label="Edit properties" aria-pressed={inspector && inspectorTab === 'edit'} onClick={() => showProperties('edit')}><Icon name="settings" /></button><button className="icon-button" title="Layers" aria-label="Layers" aria-pressed={inspector && inspectorTab === 'layers'} onClick={() => showProperties('layers')}><Icon name="layers" /></button></div>
         <div className={`canvas-stage ${viewport.handTool ? 'hand-tool' : ''} ${viewport.panning ? 'panning' : ''}`} ref={stage} inert={visualBusy || !ready || canvasFailed} aria-busy={visualBusy || !ready} tabIndex={0} role="region" aria-label="Design canvas. Hold Space and drag to pan. Control or Command and scroll to zoom." onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={event => { if (event.dataTransfer.files.length) { event.preventDefault(); void addImages(event.dataTransfer.files); } }}>
-          {selected && <div className="editor-context" role="toolbar" aria-label="Selected element controls">{selected.type === 'text' ? <><select aria-label="Quick font" value={selected.fontFamily} disabled={disabled || selected.locked} onChange={event => change({ fontFamily: event.target.value as DesignFont })}>{DESIGN_FONTS.map(font => <option key={font}>{font}</option>)}</select><NumberField label="Quick font size" value={selected.fontSize} min={6} max={512} disabled={disabled || selected.locked} onCommit={value => change({ fontSize: value })} /><button className="icon-button bold-button" aria-label="Bold" aria-pressed={selected.fontWeight === 700} disabled={disabled || selected.locked} onClick={() => change({ fontWeight: selected.fontWeight === 700 ? 400 : 700 })}>B</button></> : <span>{selected.type === 'image' ? 'Image' : selected.type === 'ellipse' ? 'Circle' : 'Rectangle'}</span>}{selected.type !== 'image' && <input type="color" aria-label="Quick colour" value={(selected.fill ?? '#7568ED').slice(0, 7)} disabled={disabled || selected.locked} onChange={event => change({ fill: event.target.value })} />}<button className="icon-button" aria-label="Duplicate selected element" title="Duplicate" disabled={disabled || selected.locked} onClick={duplicate}><Icon name="duplicate" size={17} /></button><button className="icon-button" aria-label="Delete selected element" title="Delete" disabled={disabled || selected.locked} onClick={remove}><Icon name="trash" size={17} /></button><button className="icon-button" aria-label="More element properties" title="More properties" onClick={() => showProperties('edit')}><Icon name="settings" size={17} /></button></div>}
-          <div className="canvas-paper" style={viewport.paperStyle}><canvas ref={canvasElement} aria-label={`${page.name}. Use Layers to select elements with the keyboard.`} /></div>{!ready && <div className="canvas-loading">Opening your creative space…</div>}
+          {selected && <div className="editor-context" role="toolbar" aria-label="Selected element controls">{selected.type === 'text' ? <><select aria-label="Quick font" value={selected.fontFamily} disabled={disabled || selected.locked} onChange={event => change({ fontFamily: event.target.value as DesignFont })}>{DESIGN_FONTS.map(font => <option key={font}>{font}</option>)}</select><NumberField label="Quick font size" value={selected.fontSize} min={6} max={512} disabled={disabled || selected.locked} onCommit={value => change({ fontSize: value })} /><button className="icon-button bold-button" aria-label="Bold" aria-pressed={selected.fontWeight === 700} disabled={disabled || selected.locked} onClick={() => change({ fontWeight: selected.fontWeight === 700 ? 400 : 700 })}>B</button></> : <span>{selected.type === 'image' ? 'Image' : selected.type === 'ellipse' ? 'Circle' : 'Rectangle'}</span>}{selected.type !== 'image' && <input type="color" aria-label="Quick colour" value={(selected.fill ?? '#7568ED').slice(0, 7)} disabled={disabled || selected.locked} onChange={event => change({ fill: event.target.value })} />}<button className="icon-button" aria-label="Duplicate selected element" title="Duplicate" disabled={disabled || selected.locked} onClick={duplicate}><Icon name="duplicate" size={17} /></button><button className="icon-button" aria-label="Delete selected element" title="Delete" disabled={disabled || selected.locked} onClick={remove}><Icon name="trash" size={17} /></button><button className="icon-button" aria-label="Align element" title="Align element" disabled={disabled || selected.locked || !selected.visible} onClick={showAlignment}><Icon name="align" size={17} /></button><button className="icon-button" aria-label="Snap guides" title="Snap to edges and centers (hold Alt to bypass)" aria-pressed={snapping} onClick={() => setSnapping(value => !value)}><Icon name="magnet" size={17} /></button><button className="icon-button" aria-label="More element properties" title="More properties" onClick={() => showProperties('edit')}><Icon name="settings" size={17} /></button></div>}
+          <div className="canvas-paper" style={viewport.paperStyle}><canvas ref={canvasElement} aria-label={`${page.name}. Use Layers to select elements with the keyboard.`} />{alignmentGuides.length > 0 && <svg className="alignment-guides" aria-hidden="true" viewBox={`0 0 ${document.width} ${document.height}`} preserveAspectRatio="none">{alignmentGuides.map((guide, index) => { const line = guide.axis === 'x' ? { x1: guide.position, x2: guide.position, y1: guide.start, y2: guide.end } : { x1: guide.start, x2: guide.end, y1: guide.position, y2: guide.position }; return <g key={index}><line className="alignment-guide-halo" {...line} /><line className="alignment-guide-line" {...line} /></g>; })}</svg>}</div>{!ready && <div className="canvas-loading">Opening your creative space…</div>}
         </div>
         {showPages && <PageStrip document={document} pageIndex={pageIndex} canEdit disabled={visualBusy} onSelect={switchPage} onAdd={() => addPage()} onDuplicate={index => addPage(index)} onDelete={deletePage} onMove={movePage} />}
         <footer className="statusbar"><button className="page-details" disabled={disabled} onClick={() => showProperties('edit', true)} title="Page settings">{page.name}<span>{document.width} × {document.height} px</span></button><div className="viewport-controls"><button className="icon-button" title="Hand tool (H), or hold Space" aria-label="Hand tool" aria-pressed={viewport.handTool} onClick={() => { settleText(); viewport.setHandTool(!viewport.handTool); stage.current?.focus(); }}><Icon name="hand" /></button><input className="zoom-slider" type="range" min={2} max={400} value={Math.round(viewport.scale * 100)} aria-label="Zoom level" onChange={event => viewport.setZoom(event.target.value)} /><select aria-label="Canvas zoom" value={viewport.zoom} onChange={event => viewport.setZoom(event.target.value)}><option value="fit">{viewport.zoom === 'fit' ? `${Math.round(viewport.scale * 100)}%` : 'Fit'}</option>{viewport.zoom !== 'fit' && ![25, 50, 75, 100, 150, 200, 400].includes(Number(viewport.zoom)) && <option value={viewport.zoom}>{Math.round(viewport.scale * 100)}%</option>}{[25, 50, 75, 100, 150, 200, 400].map(value => <option key={value} value={value}>{value}%</option>)}</select><button className="icon-button" title="Fit canvas (Shift 1)" aria-label="Fit canvas" onClick={viewport.fit}><Icon name="expand" /></button><button className="pages-toggle" aria-pressed={showPages} onClick={() => setShowPages(value => !value)}><Icon name="layers" size={16} /><span>Pages</span><small>{pageIndex + 1} / {document.pages.length}</small></button><button className="icon-button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={() => shortcuts.current?.showModal()}><Icon name="keyboard" /></button></div></footer>
       </main>
-      {inspector && <Inspector document={document} page={page} selected={selected} selectedId={selectedId} tab={inspectorTab} disabled={disabled} onTab={setInspectorTab} onClose={() => setInspector(false)} onSelect={select} onChange={change} onDuplicate={duplicate} onRemove={remove} onReorder={reorder} onPage={patch => { if (disabled) return; const next = copyDocument(capture()); Object.assign(next.pages[pageRef.current], patch); commit(next); }} onSize={(width, height) => { if (!disabled) commit({ ...capture(), width, height }); }} />}
+      {inspector && <Inspector document={document} page={page} selected={selected} selectedId={selectedId} tab={inspectorTab} disabled={disabled} snapping={snapping} alignmentBusy={visualBusy} onSnapping={setSnapping} onAlign={alignElement} onTab={setInspectorTab} onClose={() => setInspector(false)} onSelect={select} onChange={change} onDuplicate={duplicate} onRemove={remove} onReorder={reorder} onPage={patch => { if (disabled) return; const next = copyDocument(capture()); Object.assign(next.pages[pageRef.current], patch); commit(next); }} onSize={(width, height) => { if (!disabled) commit({ ...capture(), width, height }); }} />}
     </div>
-    <dialog className="shortcuts-dialog" ref={shortcuts}><div className="panel-heading"><strong>Make yourself at home</strong><button className="icon-button" aria-label="Close keyboard shortcuts" onClick={() => shortcuts.current?.close()}><Icon name="close" /></button></div><div className="shortcut-content"><p>Use Command on Mac in place of Ctrl.</p>{[['Save locally', 'Ctrl S'], ['Undo / redo', 'Ctrl Z / Ctrl Shift Z'], ['Duplicate', 'Ctrl D'], ['Delete selected element', 'Delete'], ['Move / move faster', 'Arrow / Shift Arrow'], ['Add text / rectangle / circle', 'T / R / O'], ['Hand / select tool', 'H / V'], ['Pan', 'Space + drag / middle mouse'], ['Zoom to pointer', 'Ctrl + scroll'], ['Zoom in / out', '+ / −'], ['Fit / actual size', 'Shift 1 / Shift 0'], ['Deselect / close panel', 'Esc']].map(([label, key]) => <div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Insertion and arrow shortcuts apply while the canvas is focused. Shortcuts stay out of the way while you type.</p></div></dialog>
+    <dialog className="shortcuts-dialog" ref={shortcuts}><div className="panel-heading"><strong>Make yourself at home</strong><button className="icon-button" aria-label="Close keyboard shortcuts" onClick={() => shortcuts.current?.close()}><Icon name="close" /></button></div><div className="shortcut-content"><p>Use Command on Mac in place of Ctrl.</p>{[['Save locally', 'Ctrl S'], ['Undo / redo', 'Ctrl Z / Ctrl Shift Z'], ['Duplicate', 'Ctrl D'], ['Delete selected element', 'Delete'], ['Move / move faster', 'Arrow / Shift Arrow'], ['Add text / rectangle / circle', 'T / R / O'], ['Hand / select tool', 'H / V'], ['Pan', 'Space + drag / middle mouse'], ['Zoom to pointer', 'Ctrl + scroll'], ['Bypass snapping', 'Alt + drag'], ['Zoom in / out', '+ / −'], ['Fit / actual size', 'Shift 1 / Shift 0'], ['Deselect / close panel', 'Esc']].map(([label, key]) => <div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Insertion and arrow shortcuts apply while the canvas is focused. Shortcuts stay out of the way while you type.</p></div></dialog>
     <input className="sr-only" ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp" multiple aria-label="Upload images" onChange={event => void addImages(event.target.files)} />
     <input className="sr-only" ref={fileInput} type="file" accept=".json,.design.json,application/json" aria-label="Open editable project" onChange={event => void openFile(event.target.files?.[0])} />
   </div>;
