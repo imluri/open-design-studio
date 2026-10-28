@@ -114,8 +114,8 @@ summary::-webkit-details-marker { display: none; }
 .editing-area { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
 .canvas-actions { position: absolute; top: 10px; right: 12px; display: flex; padding: 3px; border-radius: 9px; background: var(--ms-bg); z-index: 8; box-shadow: 0 2px 8px #0001; }
 .icon-button[aria-pressed="true"] { background: var(--ms-selected); color: var(--ms-accent); }
+/* Selection controls stay in the toolbar gutter without changing the fit area. */
 .canvas-stage { position: relative; flex: 1; min-width: 0; min-height: 0; padding: 58px 32px 19px; overflow: hidden; overscroll-behavior: contain; touch-action: none; }
-.canvas-stage:has(.editor-context) { padding-top: 70px; }
 .canvas-paper { background: #fff; box-shadow: 0 3px 16px #0002; }
 .canvas-paper canvas { display: block; }
 .canvas-stage:focus-visible { outline: 2px solid var(--ms-accent); outline-offset: -2px; }
@@ -212,10 +212,8 @@ label { display: grid; gap: 7px; min-width: 0; color: var(--ms-muted); font-size
   .tool-rail { padding: 7px 4px; gap: 3px; }
   .tool-rail button { min-height: 61px; font-size: 9px; gap: 7px; }
   .canvas-stage { padding: 64px 15px 16px; }
-  .canvas-stage:has(.editor-context) { padding-top: 119px; }
   .canvas-actions { top: 8px; right: 8px; }
   .canvas-actions .icon-button { width: 44px; height: 44px; }
-  .editor-context { top: 64px; left: 8px; max-width: calc(100% - 16px); }
   .editor-context > select { width: 90px; }
   .editor-context .icon-button { min-width: 34px; height: 38px; }
   .statusbar { min-height: 48px; padding: 2px 4px; }
