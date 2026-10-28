@@ -1,5 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type KeyboardEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { StaticCanvas } from 'fabric';
 import type { DesignDocument, DesignPage } from '../core/model';
 import { DESIGN_MAX_PAGES } from '../core/model';
 import { pageObjects } from '../core/canvas';
@@ -43,7 +44,6 @@ async function drainPreviews() {
 }
 
 async function renderPreview(page: DesignPage, width: number, height: number, stale: () => boolean): Promise<Blob | null> {
-  const { StaticCanvas } = await import('fabric');
   if (stale()) return null;
   const objects = await pageObjects(page, false);
   if (stale()) { for (const object of objects) object.dispose(); return null; }

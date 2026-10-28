@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Canvas, Textbox } from 'fabric';
+import { Canvas } from 'fabric';
+import type { Textbox } from 'fabric';
 import { DESIGN_FONTS, DESIGN_MAX_ELEMENTS, DESIGN_MAX_PAGES, validateDesignDocument, validateProject, type DesignDocument, type DesignElement, type DesignElementBase, type DesignFont, type Project, type ProjectSummary } from './core/model';
 import { createProject, TEMPLATES } from './core/templates';
 import { getProject, listProjects, saveProject } from './core/storage';
 import { parseProjectFile, projectBlob } from './core/project-files';
 import { designFilename, downloadBlob, exportPage, exportPages, importImage, pageObjects, readCanvasPage, type LayerObject } from './core/canvas';
+import { applySelection, attachMultiSelection, attachStageMarquee, expandSelectionIds, type MarqueeBox } from './core/selection';
 import { alignmentDelta, attachAlignmentGuides, getObjectBounds, type AlignmentGuide, type AlignmentKind } from './core/alignment';
 import useCanvasViewport from './ui/useCanvasViewport';
 import Inspector, { NumberField, type ElementPatch } from './ui/Inspector';
@@ -31,7 +33,8 @@ type Format = 'png' | 'jpeg' | 'svg';
 
 export default function App() {
   const [project, setProject] = useState<Project>(() => createProject('bold-announcement'));
-  const [pageIndex, setPageIndex] = useState(0), [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pageIndex, setPageIndex] = useState(0), [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [marquee, setMarquee] = useState<MarqueeBox | null>(null);
   const [ready, setReady] = useState(false), [rendering, setRendering] = useState(false), [started, setStarted] = useState(false);
   const [dirty, setDirty] = useState(false), [status, setStatus] = useState('Loading local projects…');
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [message, setMessage] = useState('');
@@ -46,12 +49,18 @@ export default function App() {
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem('ods:theme') === 'light' ? 'light' : 'dark'; } catch { return 'dark'; } });
   const canvasElement = useRef<HTMLCanvasElement>(null), canvas = useRef<Canvas | null>(null), stage = useRef<HTMLDivElement>(null), app = useRef<HTMLDivElement>(null);
   const imageInput = useRef<HTMLInputElement>(null), fileInput = useRef<HTMLInputElement>(null), fileMenu = useRef<HTMLDetailsElement>(null), exportMenu = useRef<HTMLDetailsElement>(null), shortcuts = useRef<HTMLDialogElement>(null);
-  const projectRef = useRef(project), pageRef = useRef(pageIndex), selectionRef = useRef(selectedId), dirtyRef = useRef(dirty), busyRef = useRef(busy);
-  projectRef.current = project; pageRef.current = pageIndex; selectionRef.current = selectedId; dirtyRef.current = dirty; busyRef.current = busy;
+  const projectRef = useRef(project), pageRef = useRef(pageIndex), selectionRef = useRef(selectedIds), dirtyRef = useRef(dirty), busyRef = useRef(busy);
+  projectRef.current = project; pageRef.current = pageIndex; selectionRef.current = selectedIds; dirtyRef.current = dirty; busyRef.current = busy;
   const renderVersion = useRef(0), renderingRef = useRef(false), renderedDocument = useRef<DesignDocument | null>(null), renderedPageId = useRef<string | null>(null);
   const generation = useRef(0), writes = useRef<Promise<unknown>>(Promise.resolve()), history = useRef<{ undo: DesignDocument[]; redo: DesignDocument[] }>({ undo: [], redo: [] });
   const callbacks = useRef({ modified: () => {}, typing: () => {}, save: () => Promise.resolve(true) });
-  const document = project.document, page = document.pages[pageIndex] ?? document.pages[0], selected = page.elements.find(item => item.id === selectedId);
+  const document = project.document, page = document.pages[pageIndex] ?? document.pages[0];
+  const selectedElements = page.elements.filter(item => selectedIds.includes(item.id));
+  const selected = selectedElements.length === 1 ? selectedElements[0] : undefined;
+  const singleGroup = selectedElements.length > 1 && Boolean(selectedElements[0].groupId) && selectedElements.every(element => element.groupId === selectedElements[0].groupId);
+  const canGroup = selectedElements.length > 1 && !singleGroup && selectedElements.every(element => !element.locked && element.visible && element.opacity > 0);
+  const canUngroup = selectedElements.some(element => element.groupId) && selectedElements.every(element => !element.locked);
+  const selectionEditable = selectedElements.length > 0 && selectedElements.every(element => !element.locked && element.visible && element.opacity > 0);
   const disabled = Boolean(busy) || !started;
   const viewport = useCanvasViewport({ stage, canvas, ready, width: document.width, height: document.height, pageId: page.id, disabled: disabled || rendering });
   const refreshLayout = viewport.refreshLayout;
@@ -78,15 +87,27 @@ export default function App() {
       setCounts({ undo: history.current.undo.length, redo: history.current.redo.length });
     } catch (caught) { setError(errorMessage(caught)); }
   }
-  function select(id: string | null) {
-    const instance = canvas.current, object = instance?.getObjects().find(raw => (raw as LayerObject).studioId === id);
-    if (object?.selectable) instance?.setActiveObject(object); else instance?.discardActiveObject();
-    selectionRef.current = id; setSelectedId(id); instance?.requestRenderAll();
+  function rememberSelection(ids: string[]) {
+    selectionRef.current = ids;
+    setSelectedIds(previous => previous.length === ids.length && previous.every((id, index) => id === ids[index]) ? previous : ids);
   }
-  function change(patch: ElementPatch, id = selectionRef.current ?? undefined) {
-    if (disabled || !id) return;
-    const next = copyDocument(capture());
-    next.pages[pageRef.current].elements = next.pages[pageRef.current].elements.map(element => element.id === id ? { ...element, ...patch } as DesignElement : element);
+  function select(id: string | null, additive = false) {
+    const currentPage = projectRef.current.document.pages[pageRef.current];
+    const element = currentPage.elements.find(item => item.id === id);
+    const expanded = id ? expandSelectionIds(currentPage, [id]) : [];
+    const next = additive && id ? expanded.every(item => selectionRef.current.includes(item))
+      ? selectionRef.current.filter(item => !expanded.includes(item)) : [...new Set([...selectionRef.current, ...expanded])]
+      : expanded;
+    if (canvas.current) applySelection(canvas.current, next);
+    rememberSelection(!additive && id && element && (!element.visible || element.locked || element.opacity <= 0) ? [id] : next);
+  }
+  function change(patch: ElementPatch, id?: string) {
+    if (disabled) return;
+    const next = copyDocument(capture()), elements = next.pages[pageRef.current].elements;
+    const ids = id ? [id] : selectionRef.current;
+    const groups = new Set(('locked' in patch || 'visible' in patch || 'opacity' in patch) ? elements.filter(element => ids.includes(element.id) && element.groupId).map(element => element.groupId) : []);
+    next.pages[pageRef.current].elements = elements.map(element => ids.includes(element.id) || element.groupId && groups.has(element.groupId) ? { ...element, ...patch } as DesignElement : element);
+    if ('visible' in patch || 'locked' in patch) select(null);
     commit(next);
   }
   function add(type: 'text' | 'rect' | 'ellipse' | 'image', values: Partial<DesignElementBase> & { text?: string; fontSize?: number; fontWeight?: 400 | 700; src?: string } = {}) {
@@ -95,47 +116,95 @@ export default function App() {
     if (elements.length >= DESIGN_MAX_ELEMENTS) { setError(`Each page supports up to ${DESIGN_MAX_ELEMENTS} layers.`); return; }
     const base: DesignElementBase = { id: uid(), name: type === 'text' ? 'Text' : type === 'image' ? 'Image' : type === 'rect' ? 'Rectangle' : 'Circle', x: 90, y: 180, width: type === 'text' ? Math.min(760, next.width - 120) : 300, height: type === 'text' ? 160 : 300, rotation: 0, opacity: 1, locked: false, visible: true, ...values };
     const element: DesignElement = type === 'text' ? { ...base, type, text: values.text ?? 'Your next great idea', fontSize: values.fontSize ?? 72, fontFamily: 'Arial', fontWeight: values.fontWeight ?? 700, textAlign: 'left', fill: '#7568ED' } : type === 'image' ? { ...base, type, src: values.src! } : type === 'rect' ? { ...base, type, fill: '#7568ED', borderRadius: 18 } : { ...base, type, fill: '#FF957A' };
-    elements.push(element); selectionRef.current = element.id; setSelectedId(element.id); viewport.setHandTool(false); commit(next);
+    elements.push(element); rememberSelection([element.id]); viewport.setHandTool(false); commit(next);
     if (window.innerWidth <= 760) setPanelOpen(false);
+  }
+  function selectedUnits(elements: DesignElement[], ids = selectionRef.current) {
+    const units = new Map<string, DesignElement[]>();
+    for (const element of elements) if (ids.includes(element.id)) {
+      const key = element.groupId ? `group:${element.groupId}` : `element:${element.id}`;
+      units.set(key, [...(units.get(key) ?? []), element]);
+    }
+    return [...units.values()];
+  }
+  function boundsOf(elements: DesignElement[]) {
+    const objects = canvas.current?.getObjects() as LayerObject[] | undefined;
+    const bounds = elements.map(element => objects?.find(object => object.studioId === element.id)).filter((object): object is LayerObject => Boolean(object)).map(getObjectBounds);
+    if (bounds.length !== elements.length || !bounds.length) return null;
+    const left = Math.min(...bounds.map(box => box.left)), top = Math.min(...bounds.map(box => box.top));
+    return { left, top, width: Math.max(...bounds.map(box => box.left + box.width)) - left, height: Math.max(...bounds.map(box => box.top + box.height)) - top };
   }
   function duplicate() {
     if (disabled || renderingRef.current) return;
-    const next = copyDocument(capture()), elements = next.pages[pageRef.current].elements, found = elements.find(item => item.id === selectionRef.current);
-    if (!found || found.locked || elements.length >= DESIGN_MAX_ELEMENTS) return;
-    const copy = { ...clone(found), id: uid(), name: `${found.name.slice(0, 150)} copy`, x: Math.min(16000, found.x + 24), y: Math.min(16000, found.y + 24) };
-    elements.push(copy); selectionRef.current = copy.id; setSelectedId(copy.id); commit(next);
+    const next = copyDocument(capture()), elements = next.pages[pageRef.current].elements, found = elements.filter(item => selectionRef.current.includes(item.id));
+    if (!found.length || found.some(item => item.locked) || elements.length + found.length > DESIGN_MAX_ELEMENTS) return;
+    const groups = new Map<string, string>();
+    const copies = found.map(item => {
+      if (item.groupId && !groups.has(item.groupId)) groups.set(item.groupId, uid());
+      return { ...item, id: uid(), name: `${item.name.slice(0, 150)} copy`, x: Math.min(16000, item.x + 24), y: Math.min(16000, item.y + 24), ...(item.groupId ? { groupId: groups.get(item.groupId)! } : {}) };
+    });
+    elements.push(...copies); rememberSelection(copies.map(item => item.id)); commit(next);
   }
   function remove() {
     if (disabled || renderingRef.current) return;
     const next = copyDocument(capture()), elements = next.pages[pageRef.current].elements;
-    if (elements.find(item => item.id === selectionRef.current)?.locked) return;
-    next.pages[pageRef.current].elements = elements.filter(item => item.id !== selectionRef.current); select(null); commit(next);
+    if (elements.some(item => selectionRef.current.includes(item.id) && item.locked)) return;
+    next.pages[pageRef.current].elements = elements.filter(item => !selectionRef.current.includes(item.id)); select(null); commit(next);
   }
   function reorder(direction: number) {
     if (disabled || renderingRef.current) return;
-    const next = copyDocument(capture()), elements = next.pages[pageRef.current].elements, index = elements.findIndex(item => item.id === selectionRef.current);
-    if (index < 0 || elements[index].locked) return;
-    const target = Math.max(0, Math.min(elements.length - 1, index + direction));
-    if (target === index) return; const [item] = elements.splice(index, 1); elements.splice(target, 0, item); commit(next);
+    const next = copyDocument(capture()), elements = next.pages[pageRef.current].elements, chosen = new Set(selectionRef.current);
+    if (elements.some(item => chosen.has(item.id) && item.locked)) return;
+    const units = selectedUnits(elements, elements.map(element => element.id));
+    const picked = (unit: DesignElement[]) => unit.some(element => chosen.has(element.id));
+    if (direction > 0) { for (let index = units.length - 2; index >= 0; index--) if (picked(units[index]) && !picked(units[index + 1])) [units[index], units[index + 1]] = [units[index + 1], units[index]]; }
+    else { for (let index = 1; index < units.length; index++) if (picked(units[index]) && !picked(units[index - 1])) [units[index], units[index - 1]] = [units[index - 1], units[index]]; }
+    next.pages[pageRef.current].elements = units.flat(); commit(next);
   }
-  function alignElement(kind: AlignmentKind, referenceId: string | null) {
+  function groupSelection(ungroup = false) {
+    if (disabled || renderingRef.current || viewport.isInteracting()) return;
+    settleText(); const next = copyDocument(capture()), elements = next.pages[pageRef.current].elements;
+    const chosen = elements.filter(element => selectionRef.current.includes(element.id));
+    if (!chosen.length || chosen.some(element => element.locked)) return;
+    if (ungroup) {
+      const groups = new Set(chosen.map(element => element.groupId).filter(Boolean));
+      for (const element of elements) if (element.groupId && groups.has(element.groupId)) delete element.groupId;
+    } else {
+      if (chosen.length < 2 || chosen.some(element => !element.visible || element.opacity <= 0) || chosen[0].groupId && chosen.every(element => element.groupId === chosen[0].groupId)) return;
+      const groupId = uid(), last = Math.max(...chosen.map(element => elements.indexOf(element)));
+      chosen.forEach(element => { element.groupId = groupId; });
+      const others = elements.filter(element => !chosen.includes(element));
+      others.splice(last - chosen.length + 1, 0, ...chosen); next.pages[pageRef.current].elements = others;
+    }
+    rememberSelection(chosen.map(element => element.id)); commit(next);
+  }
+  function nudgeSelection(dx: number, dy: number) {
+    if (disabled || renderingRef.current) return;
+    const next = copyDocument(capture()), chosen = next.pages[pageRef.current].elements.filter(element => selectionRef.current.includes(element.id));
+    if (!chosen.length || chosen.some(element => element.locked || !element.visible)) return;
+    if (chosen.some(element => Math.abs(element.x + dx) > 16384 || Math.abs(element.y + dy) > 16384)) return;
+    chosen.forEach(element => { element.x += dx; element.y += dy; }); commit(next);
+  }
+  function alignElement(kind: AlignmentKind, referenceId: string | null, withinSelection = false) {
     if (disabled || renderingRef.current || viewport.isInteracting() || !canvas.current) return;
     settleText();
     if (renderedDocument.current !== projectRef.current.document || renderedPageId.current !== projectRef.current.document.pages[pageRef.current]?.id) return;
-    const instance = canvas.current, next = copyDocument(capture()), elements = next.pages[pageRef.current].elements;
-    const element = elements.find(item => item.id === selectionRef.current);
-    const target = (instance.getObjects() as LayerObject[]).find(object => object.studioId === element?.id);
-    if (!element || element.locked || !element.visible || element.opacity <= 0 || !target) return;
-    let reference = { left: 0, top: 0, width: next.width, height: next.height };
+    const next = copyDocument(capture()), elements = next.pages[pageRef.current].elements;
+    const chosen = elements.filter(item => selectionRef.current.includes(item.id));
+    if (!chosen.length || chosen.some(element => element.locked || !element.visible || element.opacity <= 0)) return;
+    const combined = boundsOf(chosen); if (!combined) return;
+    let reference = withinSelection ? combined : { left: 0, top: 0, width: next.width, height: next.height };
     if (referenceId !== null) {
-      const source = elements.find(item => item.id === referenceId && item.id !== element.id && item.visible && item.opacity > 0);
-      const object = (instance.getObjects() as LayerObject[]).find(item => item.studioId === source?.id);
-      if (!source || !object) { setError('Choose a visible layer to align to.'); return; }
-      reference = getObjectBounds(object);
+      const source = elements.find(item => item.id === referenceId && !selectionRef.current.includes(item.id) && item.visible && item.opacity > 0);
+      if (!source) { setError('Choose a visible layer to align to.'); return; }
+      const members = source.groupId ? elements.filter(item => item.groupId === source.groupId && item.visible && item.opacity > 0) : [source];
+      const bounds = boundsOf(members); if (!bounds) return; reference = bounds;
     }
-    const delta = alignmentDelta(getObjectBounds(target), reference, kind);
-    element.x = Math.round((element.x + delta.x) * 100) / 100;
-    element.y = Math.round((element.y + delta.y) * 100) / 100;
+    for (const unit of selectedUnits(elements)) {
+      const bounds = boundsOf(unit); if (!bounds) return;
+      const delta = alignmentDelta(bounds, reference, kind);
+      for (const element of unit) { element.x = Math.round((element.x + delta.x) * 100) / 100; element.y = Math.round((element.y + delta.y) * 100) / 100; }
+    }
     setAlignmentGuides([]); commit(next);
   }
   function showAlignment() {
@@ -156,7 +225,8 @@ export default function App() {
   function addPage(copyIndex?: number) {
     if (disabled || renderingRef.current || document.pages.length >= DESIGN_MAX_PAGES) return;
     settleText(); const next = copyDocument(capture());
-    const added = copyIndex === undefined ? { id: uid(), name: `Page ${next.pages.length + 1}`, background: '#FFFFFF', elements: [] } : { ...clone(next.pages[copyIndex]), id: uid(), name: `${next.pages[copyIndex].name.slice(0, 150)} copy`, elements: next.pages[copyIndex].elements.map(item => ({ ...item, id: uid() })) };
+    const copiedGroups = new Map<string, string>();
+    const added = copyIndex === undefined ? { id: uid(), name: `Page ${next.pages.length + 1}`, background: '#FFFFFF', elements: [] } : { ...clone(next.pages[copyIndex]), id: uid(), name: `${next.pages[copyIndex].name.slice(0, 150)} copy`, elements: next.pages[copyIndex].elements.map(item => { if (item.groupId && !copiedGroups.has(item.groupId)) copiedGroups.set(item.groupId, uid()); return { ...item, id: uid(), ...(item.groupId ? { groupId: copiedGroups.get(item.groupId)! } : {}) }; }) };
     const index = copyIndex === undefined ? next.pages.length : copyIndex + 1; next.pages.splice(index, 0, added); select(null); setPageIndex(index); commit(next);
   }
   function deletePage(index: number) {
@@ -188,7 +258,7 @@ export default function App() {
     } catch (caught) { setStatus('Local save failed'); setError(`${errorMessage(caught)} Download your editable project to keep a copy.`); return false; }
   }
   callbacks.current = {
-    modified: () => { if (!renderingRef.current && !busyRef.current) commit(capture()); },
+    modified: () => { if (!renderingRef.current && !busyRef.current) { try { commit(capture()); } catch (caught) { const restored = { ...projectRef.current, document: copyDocument(projectRef.current.document) }; projectRef.current = restored; setProject(restored); setError(`${errorMessage(caught)} The last valid layout was restored.`); } } },
     typing: () => { if (!renderingRef.current) { markDirty(); setTypingTick(tick => tick + 1); } },
     save: () => saveLocal(),
   };
@@ -232,7 +302,7 @@ export default function App() {
         const width = image.width * scale, height = image.height * scale;
         elements.push({ id: uid(), type: 'image', name: image.name.slice(0, 160), src: image.src, x: (next.width - width) / 2, y: (next.height - height) / 2, width, height, rotation: 0, opacity: 1, visible: true, locked: false });
       }
-      selectionRef.current = elements.at(-1)!.id; setSelectedId(selectionRef.current); commit(next); setPanelOpen(false);
+      rememberSelection(elements.slice(-files.length).map(element => element.id)); commit(next); setPanelOpen(false);
     } catch (caught) { setError(errorMessage(caught)); } finally { busyRef.current = ''; setBusy(''); if (imageInput.current) imageInput.current.value = ''; }
   }
   function downloadProject() {
@@ -246,15 +316,14 @@ export default function App() {
   }
 
   useEffect(() => {
-    let cancelled = false, instance: Canvas | undefined;
-    void import('fabric').then(({ Canvas }) => {
-      if (cancelled || !canvasElement.current) return;
-      instance = new Canvas(canvasElement.current, { enableRetinaScaling: false, preserveObjectStacking: true, selection: false }); canvas.current = instance;
+    let instance: Canvas | undefined;
+    try {
+      if (!canvasElement.current) return;
+      instance = new Canvas(canvasElement.current, { enableRetinaScaling: false, preserveObjectStacking: true, selection: true, selectionKey: 'shiftKey', uniformScaling: true, uniScaleKey: undefined, selectionColor: 'rgba(128,128,128,.12)', selectionBorderColor: '#999999' }); canvas.current = instance;
       instance.on('object:modified', () => callbacks.current.modified()); instance.on('text:editing:exited', () => callbacks.current.modified()); instance.on('text:changed', () => callbacks.current.typing());
-      const selection = () => { if (renderingRef.current) return; const id = (instance!.getActiveObject() as LayerObject | undefined)?.studioId ?? null; selectionRef.current = id; setSelectedId(id); };
-      instance.on('selection:created', selection); instance.on('selection:updated', selection); instance.on('selection:cleared', selection); setReady(true);
-    }).catch(caught => setError(errorMessage(caught)));
-    return () => { cancelled = true; canvas.current = null; void instance?.dispose(); };
+      setReady(true);
+    } catch (caught) { setError(errorMessage(caught)); }
+    return () => { canvas.current = null; void instance?.dispose(); };
   }, []);
   useEffect(() => {
     const instance = canvas.current; if (!ready || !instance) return;
@@ -262,7 +331,7 @@ export default function App() {
     void pageObjects(page, true).then(objects => {
       if (version !== renderVersion.current || instance.disposed || instance.destroyed) { objects.forEach(object => object.dispose()); return; }
       instance.clear(); instance.setDimensions({ width: document.width, height: document.height }); instance.backgroundColor = page.background; instance.add(...objects);
-      const active = objects.find(object => object.studioId === selectionRef.current); if (active?.selectable) instance.setActiveObject(active);
+      applySelection(instance, expandSelectionIds(projectRef.current.document.pages[pageRef.current], selectionRef.current));
       instance.renderAll(); renderedDocument.current = document; renderedPageId.current = page.id; renderingRef.current = false; setRendering(false); refreshLayout();
     }).catch(caught => { if (version === renderVersion.current) { instance.clear(); instance.backgroundColor = page.background; instance.requestRenderAll(); renderingRef.current = false; setRendering(false); setCanvasFailed(true); setError(`${errorMessage(caught)} Your project is preserved. Use Layers to remove an unavailable image, or download the editable project.`); } });
     return () => { renderVersion.current++; };
@@ -277,7 +346,14 @@ export default function App() {
       onGuides: setAlignmentGuides,
     });
   }, [ready]);
-  useEffect(() => { setAlignmentGuides([]); }, [document, page.id, viewport.scale, viewport.handTool, viewport.panning, snapping]);
+  useEffect(() => {
+    const instance = canvas.current, surface = stage.current; if (!ready || !instance || !surface) return;
+    const options = { getPage: () => projectRef.current.document.pages[pageRef.current], isBlocked: () => alignmentRuntime.current.blocked || renderingRef.current || Boolean(busyRef.current), onSelection: rememberSelection };
+    const detachSelection = attachMultiSelection(instance, options);
+    const detachMarquee = attachStageMarquee(surface, instance, { ...options, onMarquee: setMarquee });
+    return () => { detachMarquee(); detachSelection(); };
+  }, [ready]);
+  useEffect(() => { setAlignmentGuides([]); setMarquee(null); }, [document, page.id, viewport.scale, viewport.handTool, viewport.panning, snapping]);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -320,6 +396,8 @@ export default function App() {
       if (!modified && key === '?') { event.preventDefault(); shortcuts.current?.showModal(); }
       else if (modified && key === 'z') { event.preventDefault(); undo(event.shiftKey); }
       else if (event.ctrlKey && key === 'y') { event.preventDefault(); undo(true); }
+      else if (modified && key === 'g') { event.preventDefault(); if (!event.repeat) groupSelection(event.shiftKey); }
+      else if (modified && key === 'a') { event.preventDefault(); if (canvas.current) { const ids = expandSelectionIds(page, page.elements.filter(element => element.visible && !element.locked && element.opacity > 0).map(element => element.id)); applySelection(canvas.current, ids); rememberSelection(ids); } }
       else if (modified && key === 'd') { event.preventDefault(); if (!event.repeat) duplicate(); }
       else if (!modified && ['Delete', 'Backspace'].includes(event.key) && !target?.closest('button,summary,a')) { event.preventDefault(); remove(); }
       else if (!modified && ['h', 'v'].includes(key)) { event.preventDefault(); viewport.setHandTool(key === 'h'); }
@@ -329,7 +407,7 @@ export default function App() {
         if (key === '+' || key === '=') { event.preventDefault(); viewport.zoomIn(); }
         else if (key === '-') { event.preventDefault(); viewport.zoomOut(); }
         else if (!event.repeat && ['t', 'r', 'o'].includes(key)) { event.preventDefault(); add(key === 't' ? 'text' : key === 'r' ? 'rect' : 'ellipse'); }
-        else if (selected && !selected.locked && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); const amount = event.shiftKey ? 10 : 1; change({ x: Math.max(-16384, Math.min(16384, selected.x + (event.key === 'ArrowRight' ? amount : event.key === 'ArrowLeft' ? -amount : 0))), y: Math.max(-16384, Math.min(16384, selected.y + (event.key === 'ArrowDown' ? amount : event.key === 'ArrowUp' ? -amount : 0))) }); }
+        else if (selectedElements.length && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) { event.preventDefault(); const amount = event.shiftKey ? 10 : 1; nudgeSelection(event.key === 'ArrowRight' ? amount : event.key === 'ArrowLeft' ? -amount : 0, event.key === 'ArrowDown' ? amount : event.key === 'ArrowUp' ? -amount : 0); }
       }
     };
     window.addEventListener('keydown', keys); return () => window.removeEventListener('keydown', keys);
@@ -362,15 +440,26 @@ export default function App() {
       <main className="editing-area" aria-label="Design workspace">
         <div className="canvas-actions"><button className="icon-button" title="Edit properties" aria-label="Edit properties" aria-pressed={inspector && inspectorTab === 'edit'} onClick={() => showProperties('edit')}><Icon name="settings" /></button><button className="icon-button" title="Layers" aria-label="Layers" aria-pressed={inspector && inspectorTab === 'layers'} onClick={() => showProperties('layers')}><Icon name="layers" /></button></div>
         <div className={`canvas-stage ${viewport.handTool ? 'hand-tool' : ''} ${viewport.panning ? 'panning' : ''}`} ref={stage} inert={visualBusy || !ready || canvasFailed} aria-busy={visualBusy || !ready} tabIndex={0} role="region" aria-label="Design canvas. Hold Space and drag to pan. Control or Command and scroll to zoom." onDragOver={event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); }} onDrop={event => { if (event.dataTransfer.files.length) { event.preventDefault(); void addImages(event.dataTransfer.files); } }}>
-          {selected && <div className="editor-context" role="toolbar" aria-label="Selected element controls">{selected.type === 'text' ? <><select aria-label="Quick font" value={selected.fontFamily} disabled={disabled || selected.locked} onChange={event => change({ fontFamily: event.target.value as DesignFont })}>{DESIGN_FONTS.map(font => <option key={font}>{font}</option>)}</select><NumberField label="Quick font size" value={selected.fontSize} min={6} max={512} disabled={disabled || selected.locked} onCommit={value => change({ fontSize: value })} /><button className="icon-button bold-button" aria-label="Bold" aria-pressed={selected.fontWeight === 700} disabled={disabled || selected.locked} onClick={() => change({ fontWeight: selected.fontWeight === 700 ? 400 : 700 })}>B</button></> : <span>{selected.type === 'image' ? 'Image' : selected.type === 'ellipse' ? 'Circle' : 'Rectangle'}</span>}{selected.type !== 'image' && <input type="color" aria-label="Quick colour" value={(selected.fill ?? '#7568ED').slice(0, 7)} disabled={disabled || selected.locked} onChange={event => change({ fill: event.target.value })} />}<button className="icon-button" aria-label="Duplicate selected element" title="Duplicate" disabled={disabled || selected.locked} onClick={duplicate}><Icon name="duplicate" size={17} /></button><button className="icon-button" aria-label="Delete selected element" title="Delete" disabled={disabled || selected.locked} onClick={remove}><Icon name="trash" size={17} /></button><button className="icon-button" aria-label="Align element" title="Align element" disabled={disabled || selected.locked || !selected.visible} onClick={showAlignment}><Icon name="align" size={17} /></button><button className="icon-button" aria-label="Snap guides" title="Snap to edges and centers (hold Alt to bypass)" aria-pressed={snapping} onClick={() => setSnapping(value => !value)}><Icon name="magnet" size={17} /></button><button className="icon-button" aria-label="More element properties" title="More properties" onClick={() => showProperties('edit')}><Icon name="settings" size={17} /></button></div>}
-          <div className="canvas-paper" style={viewport.paperStyle}><canvas ref={canvasElement} aria-label={`${page.name}. Use Layers to select elements with the keyboard.`} />{alignmentGuides.length > 0 && <svg className="alignment-guides" aria-hidden="true" viewBox={`0 0 ${document.width} ${document.height}`} preserveAspectRatio="none">{alignmentGuides.map((guide, index) => { const line = guide.axis === 'x' ? { x1: guide.position, x2: guide.position, y1: guide.start, y2: guide.end } : { x1: guide.start, x2: guide.end, y1: guide.position, y2: guide.position }; return <g key={index}><line className="alignment-guide-halo" {...line} /><line className="alignment-guide-line" {...line} /></g>; })}</svg>}</div>{!ready && <div className="canvas-loading">Opening your creative space…</div>}
+          {selectedElements.length > 0 && <div className="editor-context" role="toolbar" aria-label="Selected element controls">
+            {selected ? selected.type === 'text' ? <><select aria-label="Quick font" value={selected.fontFamily} disabled={disabled || selected.locked} onChange={event => change({ fontFamily: event.target.value as DesignFont })}>{DESIGN_FONTS.map(font => <option key={font}>{font}</option>)}</select><NumberField label="Quick font size" value={selected.fontSize} min={6} max={512} disabled={disabled || selected.locked} onCommit={value => change({ fontSize: value })} /><button className="icon-button bold-button" aria-label="Bold" aria-pressed={selected.fontWeight === 700} disabled={disabled || selected.locked} onClick={() => change({ fontWeight: selected.fontWeight === 700 ? 400 : 700 })}>B</button></> : <span>{selected.type === 'image' ? 'Image' : selected.type === 'ellipse' ? 'Circle' : 'Rectangle'}</span> : <span>{singleGroup ? 'Group' : 'Selection'} · {selectedElements.length}</span>}
+            {selected && selected.type !== 'image' && <input type="color" aria-label="Quick colour" value={(selected.fill ?? '#7568ED').slice(0, 7)} disabled={disabled || selected.locked} onChange={event => change({ fill: event.target.value })} />}
+            <button className="icon-button" aria-label="Duplicate selection" title="Duplicate selection" disabled={disabled || !selectionEditable} onClick={duplicate}><Icon name="duplicate" size={17} /></button>
+            <button className="icon-button" aria-label="Delete selection" title="Delete selection" disabled={disabled || !selectionEditable} onClick={remove}><Icon name="trash" size={17} /></button>
+            <button className="icon-button" aria-label="Align selection" title="Align selection" disabled={disabled || !selectionEditable} onClick={showAlignment}><Icon name="align" size={17} /></button>
+            {canGroup && <button className="icon-button" aria-label="Group selection" title="Group selection (Ctrl G)" disabled={disabled} onClick={() => groupSelection()}><Icon name="group" size={17} /></button>}
+            {canUngroup && <button className="icon-button" aria-label="Ungroup selection" title="Ungroup selection (Ctrl Shift G)" disabled={disabled} onClick={() => groupSelection(true)}><Icon name="ungroup" size={17} /></button>}
+            <button className="icon-button" aria-label="Snap guides" title="Snap to edges and centers (hold Alt to bypass)" aria-pressed={snapping} onClick={() => setSnapping(value => !value)}><Icon name="magnet" size={17} /></button>
+            <button className="icon-button" aria-label="More element properties" title="More properties" onClick={() => showProperties('edit')}><Icon name="settings" size={17} /></button>
+          </div>}
+          <div className="canvas-paper" style={viewport.paperStyle}><canvas ref={canvasElement} aria-label={`${page.name}. Shift-click or drag a box to select multiple elements. Use Layers for keyboard selection.`} />{alignmentGuides.length > 0 && <svg className="alignment-guides" aria-hidden="true" viewBox={`0 0 ${document.width} ${document.height}`} preserveAspectRatio="none">{alignmentGuides.map((guide, index) => { const line = guide.axis === 'x' ? { x1: guide.position, x2: guide.position, y1: guide.start, y2: guide.end } : { x1: guide.start, x2: guide.end, y1: guide.position, y2: guide.position }; return <g key={index}><line className="alignment-guide-halo" {...line} /><line className="alignment-guide-line" {...line} /></g>; })}</svg>}</div>{!ready && <div className="canvas-loading">Opening your creative space…</div>}
+          {marquee && <div className="selection-marquee" aria-hidden="true" style={marquee} />}
         </div>
         {showPages && <PageStrip document={document} pageIndex={pageIndex} canEdit disabled={visualBusy} onSelect={switchPage} onAdd={() => addPage()} onDuplicate={index => addPage(index)} onDelete={deletePage} onMove={movePage} />}
         <footer className="statusbar"><button className="page-details" disabled={disabled} onClick={() => showProperties('edit', true)} title="Page settings">{page.name}<span>{document.width} × {document.height} px</span></button><div className="viewport-controls"><button className="icon-button" title="Hand tool (H), or hold Space" aria-label="Hand tool" aria-pressed={viewport.handTool} onClick={() => { settleText(); viewport.setHandTool(!viewport.handTool); stage.current?.focus(); }}><Icon name="hand" /></button><input className="zoom-slider" type="range" min={2} max={400} value={Math.round(viewport.scale * 100)} aria-label="Zoom level" onChange={event => viewport.setZoom(event.target.value)} /><select aria-label="Canvas zoom" value={viewport.zoom} onChange={event => viewport.setZoom(event.target.value)}><option value="fit">{viewport.zoom === 'fit' ? `${Math.round(viewport.scale * 100)}%` : 'Fit'}</option>{viewport.zoom !== 'fit' && ![25, 50, 75, 100, 150, 200, 400].includes(Number(viewport.zoom)) && <option value={viewport.zoom}>{Math.round(viewport.scale * 100)}%</option>}{[25, 50, 75, 100, 150, 200, 400].map(value => <option key={value} value={value}>{value}%</option>)}</select><button className="icon-button" title="Fit canvas (Shift 1)" aria-label="Fit canvas" onClick={viewport.fit}><Icon name="expand" /></button><button className="pages-toggle" aria-pressed={showPages} onClick={() => setShowPages(value => !value)}><Icon name="layers" size={16} /><span>Pages</span><small>{pageIndex + 1} / {document.pages.length}</small></button><button className="icon-button" title="Keyboard shortcuts (?)" aria-label="Keyboard shortcuts" onClick={() => shortcuts.current?.showModal()}><Icon name="keyboard" /></button></div></footer>
       </main>
-      {inspector && <Inspector document={document} page={page} selected={selected} selectedId={selectedId} tab={inspectorTab} disabled={disabled} snapping={snapping} alignmentBusy={visualBusy} onSnapping={setSnapping} onAlign={alignElement} onTab={setInspectorTab} onClose={() => setInspector(false)} onSelect={select} onChange={change} onDuplicate={duplicate} onRemove={remove} onReorder={reorder} onPage={patch => { if (disabled) return; const next = copyDocument(capture()); Object.assign(next.pages[pageRef.current], patch); commit(next); }} onSize={(width, height) => { if (!disabled) commit({ ...capture(), width, height }); }} />}
+      {inspector && <Inspector document={document} page={page} selected={selected} selectedIds={selectedIds} canGroup={canGroup} canUngroup={canUngroup} onGroup={groupSelection} tab={inspectorTab} disabled={disabled} snapping={snapping} alignmentBusy={visualBusy} onSnapping={setSnapping} onAlign={alignElement} onTab={setInspectorTab} onClose={() => setInspector(false)} onSelect={select} onChange={change} onDuplicate={duplicate} onRemove={remove} onReorder={reorder} onPage={patch => { if (disabled) return; const next = copyDocument(capture()); Object.assign(next.pages[pageRef.current], patch); commit(next); }} onSize={(width, height) => { if (!disabled) commit({ ...capture(), width, height }); }} />}
     </div>
-    <dialog className="shortcuts-dialog" ref={shortcuts}><div className="panel-heading"><strong>Make yourself at home</strong><button className="icon-button" aria-label="Close keyboard shortcuts" onClick={() => shortcuts.current?.close()}><Icon name="close" /></button></div><div className="shortcut-content"><p>Use Command on Mac in place of Ctrl.</p>{[['Save locally', 'Ctrl S'], ['Undo / redo', 'Ctrl Z / Ctrl Shift Z'], ['Duplicate', 'Ctrl D'], ['Delete selected element', 'Delete'], ['Move / move faster', 'Arrow / Shift Arrow'], ['Add text / rectangle / circle', 'T / R / O'], ['Hand / select tool', 'H / V'], ['Pan', 'Space + drag / middle mouse'], ['Zoom to pointer', 'Ctrl + scroll'], ['Bypass snapping', 'Alt + drag'], ['Zoom in / out', '+ / −'], ['Fit / actual size', 'Shift 1 / Shift 0'], ['Deselect / close panel', 'Esc']].map(([label, key]) => <div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Insertion and arrow shortcuts apply while the canvas is focused. Shortcuts stay out of the way while you type.</p></div></dialog>
+    <dialog className="shortcuts-dialog" ref={shortcuts}><div className="panel-heading"><strong>Make yourself at home</strong><button className="icon-button" aria-label="Close keyboard shortcuts" onClick={() => shortcuts.current?.close()}><Icon name="close" /></button></div><div className="shortcut-content"><p>Use Command on Mac in place of Ctrl.</p>{[['Save locally', 'Ctrl S'], ['Undo / redo', 'Ctrl Z / Ctrl Shift Z'], ['Duplicate selection', 'Ctrl D'], ['Add or remove selection', 'Shift + click'], ['Select all elements', 'Ctrl A'], ['Group / ungroup', 'Ctrl G / Ctrl Shift G'], ['Delete selection', 'Delete'], ['Move / move faster', 'Arrow / Shift Arrow'], ['Add text / rectangle / circle', 'T / R / O'], ['Hand / select tool', 'H / V'], ['Pan', 'Space + drag / middle mouse'], ['Zoom to pointer', 'Ctrl + scroll'], ['Bypass snapping', 'Alt + drag'], ['Zoom in / out', '+ / −'], ['Fit / actual size', 'Shift 1 / Shift 0'], ['Deselect / close panel', 'Esc']].map(([label, key]) => <div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Insertion and arrow shortcuts apply while the canvas is focused. Shortcuts stay out of the way while you type.</p></div></dialog>
     <input className="sr-only" ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp" multiple aria-label="Upload images" onChange={event => void addImages(event.target.files)} />
     <input className="sr-only" ref={fileInput} type="file" accept=".json,.design.json,application/json" aria-label="Open editable project" onChange={event => void openFile(event.target.files?.[0])} />
   </div>;

@@ -1,4 +1,4 @@
-import type { BasicTransformEvent, Canvas, FabricObject } from 'fabric';
+import type { ActiveSelection, BasicTransformEvent, Canvas, FabricObject } from 'fabric';
 
 export interface AlignmentBounds { left: number; top: number; width: number; height: number }
 export type AlignmentKind = 'left' | 'centerX' | 'right' | 'top' | 'centerY' | 'bottom';
@@ -64,9 +64,10 @@ export function attachAlignmentGuides(canvas: Canvas, options: AlignmentOptions)
     currentTarget = target;
     const page = options.getPageSize();
     const pageValid = Number.isFinite(page.width) && Number.isFinite(page.height) && page.width > 0 && page.height > 0;
+    const members = new Set(target.isType('ActiveSelection') ? (target as ActiveSelection).getObjects() : [target]);
     references = [];
     for (const object of canvas.getObjects()) {
-      if (object === target || !object.visible || object.opacity <= 0) continue;
+      if (object === target || members.has(object) || object.group === target || !object.visible || object.opacity <= 0) continue;
       const bounds = getObjectBounds(object);
       if (!validBounds(bounds)) continue;
       // A covering background repeats page anchors and otherwise attracts every
@@ -121,8 +122,8 @@ export function attachAlignmentGuides(canvas: Canvas, options: AlignmentOptions)
     if (disposed || canvas.disposed || canvas.destroyed) return;
     const target = event.target;
     const alt = 'altKey' in event.e && event.e.altKey;
-    // Current documents have no groups. Do not apply a scene-space correction
-    // to a future grouped object's parent-relative position accidentally.
+    // The ActiveSelection wrapper is a scene-root target. Its children still
+    // have parent-relative coordinates and must never be corrected individually.
     if (cancelled || !options.isEnabled() || options.isBlocked() || alt || !target.visible || target.opacity <= 0 || !target.selectable || target.lockMovementX || target.lockMovementY || target.group) { clear(); return; }
     const scale = options.getScale();
     if (!Number.isFinite(scale) || scale <= 0) { clear(); return; }

@@ -45,6 +45,14 @@ Each page has an `id`, nonblank `name` (at most 160 characters), hexadecimal `ba
 
 Version 1 supports `text`, `image`, `rect` and `ellipse` elements. All elements require `id`, `name`, `type`, `x`, `y`, `width`, `height`, `rotation`, `opacity`, `locked` and `visible`. Element names may be blank but must not exceed 160 characters. Position uses design coordinates and a top-left origin; rotation is measured in degrees.
 
+### Logical groups
+
+An element may additionally contain `groupId`, using the same identifier syntax as element IDs. Elements with the same `groupId` belong to one logical group on one page. A group ID must not equal any page or element ID, and it cannot be reused on another page. Groups cannot nest: there is no group object or parent transform in this format.
+
+Each member still stores its own complete world position, size and rotation. Grouping or ungrouping therefore does not change exported appearance. The editor keeps a group's members together in stack order and uses a temporary Fabric active selection for joint movement, rotation and uniform resizing. That temporary selection is never serialized. Single-member groups are accepted by the parser so removing a member cannot make a project unreadable; editors may dissolve those memberships during normal editing.
+
+Documents without `groupId` remain valid version 1 documents. Older strict readers that predate this optional field may reject grouped files; update the reader to support group metadata before exchanging those files.
+
 For example, this is a complete editable text element:
 
 ```json
@@ -132,5 +140,7 @@ ZIP export is bounded by 120 MiB of combined output files and an estimated 128 M
 An importer must check `format` and `version` before rendering. Unsupported versions should produce a readable error. Future changes to field meanings require an explicit version/migration policy.
 
 Viewport pan, zoom, focused controls, selection, open panels and the undo history are temporary editor state. They are not required to reconstruct a design from a downloaded project.
+
+Persistent `groupId` membership is document data. Skew, reflection and nested group transforms are not supported. Joint transforms must be captured back into each member's world geometry before saving; workspace CSS zoom is never part of those values.
 
 This format does not embed fonts, executable code, credentials, cloud connections, native Illustrator data or live collaboration state.

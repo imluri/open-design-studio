@@ -18,6 +18,8 @@ export type DesignTextAlign = 'left' | 'center' | 'right';
 export interface DesignElementBase {
   id: string; name: string; x: number; y: number; width: number; height: number;
   rotation: number; opacity: number; locked: boolean; visible: boolean;
+  /** Flat, page-local logical membership. Geometry always stays in world coordinates. */
+  groupId?: string;
 }
 export type DesignElement = DesignElementBase & (
   | { type: 'text'; text: string; fill?: string; fontSize: number; fontFamily: DesignFont; fontWeight: 400 | 700; textAlign: DesignTextAlign; letterSpacing?: number }
@@ -56,7 +58,7 @@ const identifier = (value: unknown): string => typeof value === 'string' && /^[a
 const number = (value: unknown, minimum: number, maximum: number): number => typeof value === 'number' && Number.isFinite(value) && value >= minimum && value <= maximum ? value : fail('A design dimension or numeric value is outside its supported range.');
 const boolean = (value: unknown): boolean => typeof value === 'boolean' ? value : fail();
 const colour = (value: unknown, transparent = false): string => typeof value === 'string' && (/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(value) || (transparent && value === 'transparent')) ? value : fail('Use a hexadecimal colour value.');
-const commonKeys = ['id', 'name', 'type', 'x', 'y', 'width', 'height', 'rotation', 'opacity', 'locked', 'visible'];
+const commonKeys = ['id', 'name', 'type', 'x', 'y', 'width', 'height', 'rotation', 'opacity', 'locked', 'visible', 'groupId'];
 
 function imageInfo(value: unknown): { src: string; bytes: number } {
   const invalid = (): never => fail('Use an embedded PNG, JPEG or WebP image under 10 MB.');
@@ -129,6 +131,7 @@ export function validateDesignDocument(value: unknown): DesignDocument {
   if (!Number.isInteger(width) || !Number.isInteger(height)) fail('Use whole-pixel canvas dimensions from 320 to 4,096.');
   const pageList = array(input.pages, DESIGN_MAX_PAGES, 1);
   const ids = new Set<string>(), imageCache = new Map<string, number>();
+  const groupPages = new Map<string, string>();
   let totalElements = 0, totalText = 0, totalImageBytes = 0;
   const uniqueId = (value: unknown) => { const id = identifier(value); if (ids.has(id)) fail('Page and element identifiers must be unique.'); ids.add(id); return id; };
   const pages = pageList.map(raw => {
@@ -141,6 +144,11 @@ export function validateDesignDocument(value: unknown): DesignDocument {
       if (typeof type !== 'string' || !['text', 'image', 'rect', 'ellipse'].includes(type)) fail('This element type is not supported.');
       keys(element, [...commonKeys, ...(type === 'text' ? ['text', 'fill', 'fontSize', 'fontFamily', 'fontWeight', 'textAlign', 'letterSpacing'] : type === 'image' ? ['src'] : type === 'rect' ? ['fill', 'borderRadius'] : ['fill'])]);
       const base: DesignElementBase = { id: uniqueId(element.id), name: text(element.name, 160, true), x: number(element.x, -16384, 16384), y: number(element.y, -16384, 16384), width: number(element.width, 0.1, 16384), height: number(element.height, 0.1, 16384), rotation: number(element.rotation, -360, 360), opacity: number(element.opacity, 0, 1), locked: boolean(element.locked), visible: boolean(element.visible) };
+      if (element.groupId !== undefined) {
+        const groupId = identifier(element.groupId), existingPage = groupPages.get(groupId);
+        if (existingPage !== undefined && existingPage !== pageId) fail('Each group must belong to one page.');
+        groupPages.set(groupId, pageId); base.groupId = groupId;
+      }
       if (type === 'image') {
         const src = typeof element.src === 'string' ? element.src : fail('An image source is invalid.');
         let imageBytes = imageCache.get(src);
@@ -163,6 +171,8 @@ export function validateDesignDocument(value: unknown): DesignDocument {
     });
     return { id: pageId, name: text(page.name, 160), background: colour(page.background), elements };
   });
+  // Check after every record has been visited, including IDs on later pages.
+  if ([...groupPages.keys()].some(groupId => ids.has(groupId))) fail('Group identifiers must not match a page or element identifier.');
   const document: DesignDocument = { format: DESIGN_FORMAT, version: DESIGN_VERSION, width, height, pages };
   if (new TextEncoder().encode(JSON.stringify(document)).byteLength > DESIGN_MAX_DOCUMENT_BYTES) fail('The design JSON must be under 45 MB.');
   return document;

@@ -8,6 +8,7 @@ A local-first browser editor for social posts, posters and carousels. Built with
 
 - Create designs with multiple pages, text, rectangles, ellipses and uploaded images.
 - Select, resize, rotate, arrange, duplicate, hide and lock elements.
+- Shift-click or drag a selection box to select multiple elements, then align, move, duplicate or group them together.
 - Pan and zoom the workspace, use keyboard shortcuts, and undo or redo edits.
 - Snap to other elements' edges and centers while dragging, or align to a page or reference layer with six alignment controls. Hold Alt to bypass snapping.
 - Save projects in a browser library with autosave.
@@ -61,6 +62,14 @@ See [Project format](docs/PROJECT-FORMAT.md) for the file structure and limits.
 Select an element and use the **Align element** icon to open its alignment controls. Choose the page or a visible reference layer, then align left, right, top, bottom, or either center. Locked reference layers stay in place.
 
 Dragging also snaps to nearby edges and centers, with temporary guides. The magnet button toggles snapping; hold **Alt** during a drag to bypass it. Guides are editor overlays and do not appear in saved projects or exports.
+
+## Select and group
+
+Use **Shift + click** to add or remove elements, or drag a selection box from an empty area. **Ctrl A** selects all visible, unlocked elements. The Layers panel also has selection buttons for keyboard and touch use. Hold Space, use the Hand tool or drag with the middle mouse button to pan.
+
+With multiple elements selected, use **Ctrl G** or **Group** to keep them together. **Ctrl Shift G** ungroups them. Group membership is included in local saves and editable project downloads. Clicking a grouped element selects its group; ungroup to edit members individually. Grouping existing groups merges their members into one group.
+
+Selections can move, rotate and resize proportionally together. Alignment can use the selection bounds, the page, or another visible layer; grouped members stay together. Duplicate and delete act on the entire selection, and Undo restores the previous layout. On Mac, use Command in place of Ctrl.
 
 ## Project structure
 

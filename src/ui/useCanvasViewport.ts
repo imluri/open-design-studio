@@ -257,8 +257,8 @@ export default function useCanvasViewport(options: ViewportOptions) {
       if (drag.current) { if (drag.current.pointerType === 'touch') stop(event); return; }
       suppressMouseUp.current = false;
       suppressTouchEnd.current = false;
-      const blankStage = event.target === element;
-      const primaryPan = event.button === 0 && (hand.current || space.current || (blankStage && event.pointerType !== 'touch'));
+      // Plain left-drag belongs to selection, including outside the paper.
+      const primaryPan = event.button === 0 && (hand.current || space.current);
       const middlePan = event.button === 1 && event.pointerType !== 'touch';
       if (!primaryPan && !middlePan) {
         if (event.button === 0) editingPointer.current = event.pointerId;

@@ -1,4 +1,5 @@
-import type { Canvas, FabricObject, StaticCanvas, Textbox } from 'fabric';
+import { util, Rect, Ellipse, Textbox, FabricImage, StaticCanvas } from 'fabric';
+import type { Canvas, FabricObject } from 'fabric';
 import type { DesignDocument, DesignElement, DesignPage } from './model';
 import { DESIGN_MAX_IMAGE_BYTES, DESIGN_MAX_IMAGE_PIXELS, DESIGN_MAX_IMAGE_SIDE, validateDesignDocument, validateImageSource } from './model';
 
@@ -10,7 +11,12 @@ const MAX_EXPORT_PIXELS = 32_000_000;
 const MAX_ZIP_BYTES = 120 * 1024 * 1024;
 const MAX_ZIP_RASTER_BYTES = 128 * 1024 * 1024;
 const round = (value: number) => Math.round(value * 100) / 100;
-const bounded = (value: number, fallback: number, min: number, max: number) => Number.isFinite(value) ? Math.max(min, Math.min(max, round(value))) : fallback;
+const captureNumber = (value: number, min: number, max: number, message: string): number => {
+  // Half a hundredth accommodates floating-point noise at the precision we save.
+  // Reject a real limit breach before changing any member's geometry independently.
+  if (!Number.isFinite(value) || value < min - 0.005 || value > max + 0.005) throw new Error(message);
+  return Math.max(min, Math.min(max, round(value)));
+};
 
 function readDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -81,20 +87,22 @@ async function loadFonts(page: DesignPage): Promise<void> {
 
 /** Build objects from our document model, never Fabric's executable JSON object graph. */
 export async function pageObjects(page: DesignPage, editable: boolean): Promise<LayerObject[]> {
-  const { Rect, Ellipse, Textbox, FabricImage } = await import('fabric');
   await loadFonts(page);
+  const protectedGroups = new Set(page.elements.filter(element => element.groupId && (element.locked || !element.visible || element.opacity <= 0)).map(element => element.groupId));
   const objects: LayerObject[] = [];
   const images = new Map<string, HTMLImageElement>();
   let imagePixels = 0;
   try {
     for (const element of page.elements) {
+      const locked = element.locked || Boolean(element.groupId && protectedGroups.has(element.groupId));
+      const selectable = editable && !locked && element.visible && element.opacity > 0;
       const options = {
         left: element.x, top: element.y, originX: 'left' as const, originY: 'top' as const,
         angle: element.rotation, opacity: element.opacity, visible: element.visible,
-        selectable: editable && !element.locked, evented: editable && !element.locked,
-        lockMovementX: element.locked, lockMovementY: element.locked,
-        lockScalingX: element.locked, lockScalingY: element.locked, lockRotation: element.locked,
-        lockScalingFlip: true, strokeWidth: 0, padding: 5,
+        selectable, evented: selectable,
+        lockMovementX: locked, lockMovementY: locked,
+        lockScalingX: locked, lockScalingY: locked, lockRotation: locked,
+        lockScalingFlip: true, lockSkewingX: true, lockSkewingY: true, strokeWidth: 0, padding: 5,
         cornerColor: '#555555', borderColor: '#555555', cornerStrokeColor: '#ffffff',
         transparentCorners: false, cornerStyle: 'circle' as const,
       };
@@ -132,28 +140,58 @@ export async function pageObjects(page: DesignPage, editable: boolean): Promise<
   }
 }
 
-/** Capture visual transforms while retaining model-only fields and any unloaded layers. */
+export interface ObjectWorldTransform {
+  x: number; y: number; width: number; height: number;
+  rotation: number; scaleX: number; scaleY: number;
+}
+
+/**
+ * Fabric children inside an ActiveSelection use parent-relative left/top/scale.
+ * Read the complete scene matrix without dissolving or mutating that selection.
+ * Our raster/text/shape objects have zero stroke, so their model origin is the
+ * transformed local top-left, not the axis-aligned bounding rectangle's corner.
+ */
+export function readObjectWorldTransform(object: FabricObject): ObjectWorldTransform {
+  const matrix = object.calcTransformMatrix();
+  const { angle, scaleX, scaleY, skewX, skewY } = util.qrDecompose(matrix);
+  if (![...matrix, angle, scaleX, scaleY, skewX, skewY, object.width, object.height].every(Number.isFinite) || scaleX <= 0 || scaleY <= 0) {
+    throw new Error('This transform cannot be saved. Keep elements unflipped and use a positive size.');
+  }
+  if (Math.abs(skewX) > 0.000001 || Math.abs(skewY) > 0.000001) {
+    throw new Error('Skewed selections cannot be saved. Resize the selection uniformly or undo that transform.');
+  }
+  return {
+    x: matrix[4] - matrix[0] * object.width / 2 - matrix[2] * object.height / 2,
+    y: matrix[5] - matrix[1] * object.width / 2 - matrix[3] * object.height / 2,
+    width: object.width * scaleX, height: object.height * scaleY,
+    rotation: ((angle + 180) % 360 + 360) % 360 - 180, scaleX, scaleY,
+  };
+}
+
+/** Capture world transforms while retaining model-only fields and any unloaded layers. */
 export function readCanvasPage(canvas: Canvas, page: DesignPage): DesignPage {
   const originals = new Map(page.elements.map(element => [element.id, element]));
   const captured = new Map<string, DesignElement>();
   for (const object of canvas.getObjects() as LayerObject[]) {
     const original = originals.get(object.studioId ?? '');
     if (!original || captured.has(original.id)) continue;
+    const world = readObjectWorldTransform(object);
     const element: DesignElement = {
       ...original,
-      x: bounded(object.left, original.x, -16384, 16384), y: bounded(object.top, original.y, -16384, 16384),
-      width: bounded(Math.abs(object.width * object.scaleX), original.width, 0.1, 16384),
-      height: bounded(Math.abs(object.height * object.scaleY), original.height, 0.1, 16384),
-      rotation: Number.isFinite(object.angle) ? round(((object.angle + 180) % 360 + 360) % 360 - 180) : original.rotation,
-      opacity: bounded(object.opacity, original.opacity, 0, 1), visible: object.visible,
+      x: captureNumber(world.x, -16384, 16384, 'The selection moved beyond the supported area. Move it closer to the page.'),
+      y: captureNumber(world.y, -16384, 16384, 'The selection moved beyond the supported area. Move it closer to the page.'),
+      width: captureNumber(world.width, 0.1, 16384, 'Each layer must stay between 0.1 and 16,384 pixels wide. Resize the selection less.'),
+      height: captureNumber(world.height, 0.1, 16384, 'Each layer must stay between 0.1 and 16,384 pixels high. Resize the selection less.'),
+      rotation: round(world.rotation),
+      opacity: captureNumber(object.opacity, 0, 1, 'Layer opacity must stay between 0% and 100%.'), visible: object.visible,
     };
     if (element.type === 'text') {
       const text = object as Textbox;
       element.text = text.text;
-      element.fontSize = bounded(text.fontSize * Math.abs(text.scaleY), element.fontSize, 6, 512);
-      element.letterSpacing = bounded(text.charSpacing * text.fontSize / 1000 * Math.abs(text.scaleX), element.letterSpacing ?? 0, -10, 100);
+      element.fontSize = captureNumber(text.fontSize * world.scaleY, 6, 512, 'Text must stay between 6 and 512 pixels. Resize the selection less.');
+      element.letterSpacing = captureNumber(text.charSpacing * text.fontSize / 1000 * world.scaleX, -10, 100, 'Letter spacing must stay between -10 and 100 pixels. Resize the selection less.');
     } else if (element.type === 'rect' && 'rx' in object) {
-      element.borderRadius = bounded(Number(object.rx) * Math.min(Math.abs(object.scaleX), Math.abs(object.scaleY)), element.borderRadius ?? 0, 0, 2048);
+      element.borderRadius = captureNumber(Number(object.rx) * Math.min(world.scaleX, world.scaleY), 0, 2048, 'Corner rounding must stay between 0 and 2,048 pixels. Resize the selection less.');
     }
     captured.set(element.id, element);
   }
@@ -171,7 +209,6 @@ function exportSettings(document: DesignDocument, format: ExportFormat, resoluti
 async function renderPage(document: DesignDocument, index: number, format: ExportFormat, resolution: 1 | 2): Promise<Blob> {
   const page = document.pages[index];
   if (!page || !Number.isInteger(index)) throw new Error('Choose an existing page to export.');
-  const { StaticCanvas, Rect } = await import('fabric');
   const canvas: StaticCanvas = new StaticCanvas(undefined, { width: document.width, height: document.height, enableRetinaScaling: false, renderOnAddRemove: false });
   try {
     if (format === 'jpeg') {

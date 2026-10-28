@@ -43,6 +43,8 @@ export default function Icon({ name, size = 19 }: { name: string; size?: number 
     'align-centerY': <><path d="M2 12h20" /><rect x="5" y="4" width="5" height="16" rx="1" /><rect x="14" y="8" width="5" height="8" rx="1" /></>,
     'align-bottom': <><path d="M3 20h18" /><rect x="5" y="4" width="5" height="12" rx="1" /><rect x="14" y="9" width="5" height="7" rx="1" /></>,
     magnet: <><path d="M4 4v9a8 8 0 0 0 16 0V4h-5v9a3 3 0 0 1-6 0V4zM4 8h5m6 0h5" /></>,
+    group: <><rect x="6" y="6" width="12" height="12" rx="1" /><path d="M2 8V2h6m8 0h6v6M2 16v6h6m8 0h6v-6" /></>,
+    ungroup: <><rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" /><path d="M15 3h6v6M3 15v6h6" /></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name] ?? paths.logo}</svg>;
 }
