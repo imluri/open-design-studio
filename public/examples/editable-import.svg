@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
+  <rect x="0" y="0" width="1080" height="1350" fill="#f4f1ea"/>
+  <rect x="64" y="64" width="952" height="1222" rx="36" fill="#141414"/>
+  <circle cx="860" cy="330" r="230" fill="#c7fb67"/>
+  <rect x="140" y="180" width="300" height="20" fill="#c7fb67"/>
+  <text x="140" y="660" fill="#ffffff" font-family="Arial" font-size="82" font-weight="700">Make your</text>
+  <text x="140" y="770" fill="#ffffff" font-family="Arial" font-size="82" font-weight="700">next idea.</text>
+  <text x="140" y="880" fill="#b9b9b9" font-family="Arial" font-size="30">An editable SVG example</text>
+  <rect x="140" y="1020" width="360" height="88" rx="18" fill="#c7fb67"/>
+  <text x="175" y="1076" fill="#141414" font-family="Arial" font-size="27" font-weight="700">OPEN DESIGN STUDIO</text>
+</svg>

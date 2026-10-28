@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Open Design Studio Import Bridge",
+  "version": "0.1.0",
+  "description": "Open Canva's download workflow and prepare a local export for Open Design Studio.",
+  "permissions": ["activeTab", "scripting"],
+  "action": {
+    "default_title": "Import into Open Design Studio",
+    "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  }
+}

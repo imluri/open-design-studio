@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Open Design Studio Import Bridge</title>
+    <link rel="stylesheet" href="popup.css" />
+    <script type="module" src="popup.js"></script>
+  </head>
+  <body>
+    <header>
+      <span class="brand-mark" aria-hidden="true">▱</span>
+      <div><h1>Import bridge</h1><p>Open Design Studio</p></div>
+    </header>
+    <main>
+      <section aria-labelledby="export-heading">
+        <div class="step-heading"><span>1</span><h2 id="export-heading">Download from Canva</h2></div>
+        <p id="canva-state">Checking the current tab…</p>
+        <button id="open-canva-download" type="button" disabled>Open Canva download menu</button>
+        <p class="hint">In Canva, choose <strong>Share → Download</strong> and confirm the download yourself. Use SVG for supported vector elements, PPTX for presentations, or PNG/JPG for a page image.</p>
+      </section>
+      <section aria-labelledby="transfer-heading">
+        <div class="step-heading"><span>2</span><h2 id="transfer-heading">Prepare your export</h2></div>
+        <label class="file-label" for="export-file">Choose the file you downloaded</label>
+        <input id="export-file" type="file" accept=".pptx,.svg,.png,.jpg,.jpeg,.webp,.zip" />
+        <p id="file-summary" class="hint">PPTX, SVG, PNG, JPG, WebP or image ZIP. Up to 30 MB.</p>
+        <button id="create-transfer" type="button" disabled>Download transfer file</button>
+        <p class="hint">This wraps your export in a local <code>.canva-import.json</code> file. It does not extract Canva's original layers.</p>
+      </section>
+      <section aria-labelledby="editor-heading">
+        <div class="step-heading"><span>3</span><h2 id="editor-heading">Continue in the editor</h2></div>
+        <button id="open-editor" type="button" class="primary">Open in Open Design Studio ↗</button>
+        <p class="hint">Choose the transfer file in the editor's import dialog. You can also import the original download directly.</p>
+        <details>
+          <summary>Editor address</summary>
+          <label for="editor-url">Your Open Design Studio URL</label>
+          <div class="url-row"><input id="editor-url" type="url" placeholder="http://127.0.0.1:4480/" spellcheck="false" /><button id="save-url" type="button">Save</button></div>
+          <p class="hint">HTTPS, or HTTP on your own localhost. The default opens the local development server.</p>
+        </details>
+      </section>
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+    <footer>Local files only. No Canva account connection is needed. Import results depend on the exported file; some content remains an image.</footer>
+  </body>
+</html>

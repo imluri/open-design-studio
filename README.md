@@ -14,8 +14,9 @@ A local-first browser editor for social posts, posters and carousels. Built with
 - Save projects in a browser library with autosave.
 - Download and reopen editable `.design.json` projects with images embedded.
 - Export PNG, JPEG or SVG, or download all pages in a ZIP.
+- Import Canva exports with a preview and compatibility notes, plus an optional Chromium file bridge.
 
-The editor runs without an account or backend. This milestone covers static designs. Cloud storage, live collaboration, AI generation, Adobe Illustrator `.ai` editing and vector-file import are future work.
+The editor runs without an account or backend. This milestone covers static designs. Cloud storage, live collaboration, AI generation and Adobe Illustrator `.ai` editing are future work.
 
 ## Run locally
 
@@ -53,9 +54,19 @@ Upload PNG, JPEG or WebP images. Images are kept as embedded data URLs; project 
 
 Raster exports are available at 1× and 2×, within the export size limit. JPEG exports flatten transparent areas onto white. SVG is resolution independent, but text remains text: the receiving application needs a matching font, and substitutions can change layout. Fonts are not embedded or converted to outlines.
 
-Exporting SVG does not provide SVG re-import or native Illustrator `.ai` editing. Flattened artwork stays a single image element; the editor does not automatically separate it into text and objects.
+Simple SVG exports can be re-imported through **File → Import from Canva**. Complex SVG artwork may become a flattened image; native Illustrator `.ai` editing is not supported. Flattened artwork stays a single image element; the editor does not automatically separate it into text and objects.
 
 See [Project format](docs/PROJECT-FORMAT.md) for the file structure and limits.
+
+## Import from Canva
+
+Choose **File → Import from Canva** and select your downloaded Canva export. Supported formats are PPTX presentations, SVG, PNG, JPG, WebP and image/SVG ZIP files. The preview reports native editable elements, image layers and compatibility notes before opening a new local project. Your current design is saved first.
+
+PPTX can preserve supported text, basic shapes and embedded images. Simple SVG can preserve text and shapes; complex paths and effects use an image fallback. PNG/JPG pages are flattened. Imports do not provide a complete native Canva conversion, and do not update the original Canva design.
+
+An optional Manifest V3 extension helps open Canva's download menu and package a selected export into a local transfer file. It has no backend or broad host permissions. Run `npm run package:extension` to create `public/canva-bridge.zip`; a production build includes this download in the import dialog. Extract the ZIP and load its `canva-bridge` folder unpacked in Chrome, Brave or Edge. See [Canva import instructions](docs/CANVA-IMPORT.md) for setup, permissions and format limits.
+
+The original [editable SVG example](public/examples/editable-import.svg) demonstrates supported text and shapes without needing a Canva account.
 
 ## Align elements
 

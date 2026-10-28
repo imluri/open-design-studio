@@ -12,6 +12,7 @@ import useCanvasViewport from './ui/useCanvasViewport';
 import Inspector, { NumberField, type ElementPatch } from './ui/Inspector';
 import PageStrip from './ui/PageStrip';
 import Icon from './ui/Icon';
+import CanvaImportDialog from './ui/CanvaImportDialog';
 
 const clone = <T,>(value: T): T => structuredClone(value);
 // Keep immutable image strings shared across history entries instead of copying
@@ -39,6 +40,7 @@ export default function App() {
   const [dirty, setDirty] = useState(false), [status, setStatus] = useState('Loading local projects…');
   const [busy, setBusy] = useState(''), [error, setError] = useState(''), [message, setMessage] = useState('');
   const [canvasFailed, setCanvasFailed] = useState(false);
+  const [canvaImportOpen, setCanvaImportOpen] = useState(() => new URLSearchParams(window.location.search).get('import') === 'canva');
   const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
   const [snapping, setSnapping] = useState(() => { try { return localStorage.getItem('ods:snapping') !== 'off'; } catch { return true; } });
   const [panel, setPanel] = useState<Panel>('templates'), [panelOpen, setPanelOpen] = useState(false);
@@ -292,6 +294,23 @@ export default function App() {
       activate({ ...current, id: uid(), title: `${current.title.slice(0, 150)} copy`, document: copyDocument(current.document), createdAt: now, updatedAt: now }, false);
     } catch (caught) { setError(errorMessage(caught)); } finally { busyRef.current = ''; setBusy(''); }
   }
+  async function importCanvaProject(incoming: Project): Promise<boolean> {
+    if (disabled || busyRef.current) return false;
+    settleText(); busyRef.current = 'Importing design'; setBusy('Importing design');
+    try {
+      const clean = validateProject(incoming);
+      if (!await saveLocal() || dirtyRef.current) return false;
+      activate(clean, false); setPanelOpen(false); setInspector(false);
+      setMessage(`Imported ${clean.document.pages.length} ${clean.document.pages.length === 1 ? 'page' : 'pages'}. Your previous design is saved in local projects.`);
+      return true;
+    } catch (caught) { setError(errorMessage(caught)); return false; }
+    finally { busyRef.current = ''; setBusy(''); }
+  }
+  function closeCanvaImport() {
+    setCanvaImportOpen(false);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('import') === 'canva') { url.searchParams.delete('import'); window.history.replaceState(null, '', url); }
+  }
   async function addImages(files: FileList | File[] | null) {
     if (!files?.length || disabled || busyRef.current) return; settleText(); busyRef.current = 'Importing image'; setBusy('Importing image');
     try {
@@ -418,7 +437,7 @@ export default function App() {
   return <div className={`studio ${panelOpen ? 'panel-open' : ''} ${inspector ? 'inspector-open' : ''}`} data-theme={theme} ref={app} tabIndex={-1}>
     <header className="topbar">
       <button className="brand-button" title="Open Design Studio · Local projects" aria-label="Open local projects" onClick={() => openPanel('projects')}><Icon name="logo" size={24} /></button>
-      <details className="file-menu" ref={fileMenu} name="document-menu"><summary>File <Icon name="chevron" size={12} /></summary><div className="dropdown" onClick={event => { if ((event.target as Element).closest('button') && fileMenu.current) fileMenu.current.open = false; }}><span className="menu-label">Open Design Studio</span><button disabled={disabled} onClick={() => void newProject()}><Icon name="plus" />New blank design</button><button disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="folder" />Open project file</button><button disabled={disabled} onClick={() => void saveLocal(true)}><Icon name="save" />Save on this device <kbd>Ctrl S</kbd></button><button disabled={visualBusy} onClick={downloadProject}><Icon name="download" />Download editable project</button><button disabled={disabled} onClick={() => void duplicateProject()}><Icon name="duplicate" />Make a copy</button><hr /><button disabled={visualBusy} onClick={() => undo()}><Icon name="undo" />Undo</button><button disabled={visualBusy} onClick={() => undo(true)}><Icon name="redo" />Redo</button><button disabled={disabled} onClick={() => showProperties('edit', true)}><Icon name="expand" />Canvas size</button><button onClick={() => setTheme(value => value === 'dark' ? 'light' : 'dark')}><Icon name="theme" />{theme === 'dark' ? 'Light' : 'Dark'} appearance</button><button onClick={() => shortcuts.current?.showModal()}><Icon name="keyboard" />Keyboard shortcuts</button><p className="menu-note">Projects stay in this browser. Download editable files for backups or another device.</p></div></details>
+      <details className="file-menu" ref={fileMenu} name="document-menu"><summary>File <Icon name="chevron" size={12} /></summary><div className="dropdown" onClick={event => { if ((event.target as Element).closest('button') && fileMenu.current) fileMenu.current.open = false; }}><span className="menu-label">Open Design Studio</span><button disabled={disabled} onClick={() => void newProject()}><Icon name="plus" />New blank design</button><button disabled={disabled} onClick={() => fileInput.current?.click()}><Icon name="folder" />Open project file</button><button disabled={disabled} onClick={() => setCanvaImportOpen(true)}><Icon name="upload" />Import from Canva</button><button disabled={disabled} onClick={() => void saveLocal(true)}><Icon name="save" />Save on this device <kbd>Ctrl S</kbd></button><button disabled={visualBusy} onClick={downloadProject}><Icon name="download" />Download editable project</button><button disabled={disabled} onClick={() => void duplicateProject()}><Icon name="duplicate" />Make a copy</button><hr /><button disabled={visualBusy} onClick={() => undo()}><Icon name="undo" />Undo</button><button disabled={visualBusy} onClick={() => undo(true)}><Icon name="redo" />Redo</button><button disabled={disabled} onClick={() => showProperties('edit', true)}><Icon name="expand" />Canvas size</button><button onClick={() => setTheme(value => value === 'dark' ? 'light' : 'dark')}><Icon name="theme" />{theme === 'dark' ? 'Light' : 'Dark'} appearance</button><button onClick={() => shortcuts.current?.showModal()}><Icon name="keyboard" />Keyboard shortcuts</button><p className="menu-note">Projects stay in this browser. Download editable files for backups or another device.</p></div></details>
       <button className="header-command resize-command" disabled={disabled} onClick={() => showProperties('edit', true)}><Icon name="expand" size={16} /><span>Resize</span></button><span className="header-divider" />
       <button className="icon-button" aria-label="Undo" title="Undo (Ctrl Z)" disabled={visualBusy || !counts.undo} onClick={() => undo()}><Icon name="undo" /></button><button className="icon-button redo-command" aria-label="Redo" title="Redo (Ctrl Shift Z)" disabled={visualBusy || !counts.redo} onClick={() => undo(true)}><Icon name="redo" /></button>
       <div className="design-title"><label className="sr-only" htmlFor="design-title">Design name</label><input id="design-title" placeholder="Name your design" value={project.title} maxLength={160} disabled={disabled} onChange={event => { const next = { ...projectRef.current, title: event.target.value }; projectRef.current = next; setProject(next); markDirty(); }} /></div>
@@ -460,6 +479,7 @@ export default function App() {
       {inspector && <Inspector document={document} page={page} selected={selected} selectedIds={selectedIds} canGroup={canGroup} canUngroup={canUngroup} onGroup={groupSelection} tab={inspectorTab} disabled={disabled} snapping={snapping} alignmentBusy={visualBusy} onSnapping={setSnapping} onAlign={alignElement} onTab={setInspectorTab} onClose={() => setInspector(false)} onSelect={select} onChange={change} onDuplicate={duplicate} onRemove={remove} onReorder={reorder} onPage={patch => { if (disabled) return; const next = copyDocument(capture()); Object.assign(next.pages[pageRef.current], patch); commit(next); }} onSize={(width, height) => { if (!disabled) commit({ ...capture(), width, height }); }} />}
     </div>
     <dialog className="shortcuts-dialog" ref={shortcuts}><div className="panel-heading"><strong>Make yourself at home</strong><button className="icon-button" aria-label="Close keyboard shortcuts" onClick={() => shortcuts.current?.close()}><Icon name="close" /></button></div><div className="shortcut-content"><p>Use Command on Mac in place of Ctrl.</p>{[['Save locally', 'Ctrl S'], ['Undo / redo', 'Ctrl Z / Ctrl Shift Z'], ['Duplicate selection', 'Ctrl D'], ['Add or remove selection', 'Shift + click'], ['Select all elements', 'Ctrl A'], ['Group / ungroup', 'Ctrl G / Ctrl Shift G'], ['Delete selection', 'Delete'], ['Move / move faster', 'Arrow / Shift Arrow'], ['Add text / rectangle / circle', 'T / R / O'], ['Hand / select tool', 'H / V'], ['Pan', 'Space + drag / middle mouse'], ['Zoom to pointer', 'Ctrl + scroll'], ['Bypass snapping', 'Alt + drag'], ['Zoom in / out', '+ / −'], ['Fit / actual size', 'Shift 1 / Shift 0'], ['Deselect / close panel', 'Esc']].map(([label, key]) => <div key={label}><span>{label}</span><kbd>{key}</kbd></div>)}<p>Insertion and arrow shortcuts apply while the canvas is focused. Shortcuts stay out of the way while you type.</p></div></dialog>
+    {started && canvaImportOpen && <CanvaImportDialog onClose={closeCanvaImport} onImport={importCanvaProject} />}
     <input className="sr-only" ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp" multiple aria-label="Upload images" onChange={event => void addImages(event.target.files)} />
     <input className="sr-only" ref={fileInput} type="file" accept=".json,.design.json,application/json" aria-label="Open editable project" onChange={event => void openFile(event.target.files?.[0])} />
   </div>;

@@ -217,7 +217,7 @@ async function renderPage(document: DesignDocument, index: number, format: Expor
     } else canvas.backgroundColor = page.background;
     canvas.add(...await pageObjects(page, false));
     canvas.renderAll();
-    if (format === 'svg') return new Blob([canvas.toSVG()], { type: 'image/svg+xml' });
+    if (format === 'svg') return new Blob([canvas.toSVG({ suppressPreamble: true })], { type: 'image/svg+xml' });
     const blob = await canvas.toBlob({ format, quality: 1, multiplier: resolution, enableRetinaScaling: false });
     if (!blob) throw new Error('This page could not be exported.');
     return blob;
