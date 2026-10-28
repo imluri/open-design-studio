@@ -1,0 +1,40 @@
+import type { ReactNode } from 'react';
+
+export default function Icon({ name, size = 19 }: { name: string; size?: number }) {
+  const paths: Record<string, ReactNode> = {
+    logo: <><path d="m12 3 10 5-10 5L2 8zM2 12l10 5 10-5M2 16l10 5 10-5" /></>,
+    layers: <><rect x="3" y="3" width="13" height="13" rx="2" /><path d="M8 20h12V8" /></>,
+    templates: <><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 9h18M9 9v12" /></>,
+    elements: <><rect x="3" y="3" width="7" height="7" rx="1" /><circle cx="17" cy="7" r="4" /><path d="m6 13 5 8H1zM15 14h6v7h-6z" /></>,
+    text: <path d="M4 5h16M12 5v15M8 20h8" />,
+    image: <><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8" cy="8" r="1.5" /><path d="m3 16 6-6 5 5 3-3 4 4" /></>,
+    folder: <path d="M3 6V4h6l3 3h9v14H3z" />,
+    plus: <path d="M12 5v14M5 12h14" />,
+    undo: <path d="M4 9h10a6 6 0 0 1 0 12M4 9l5-5M4 9l5 5" />,
+    redo: <path d="M20 9H10a6 6 0 0 0 0 12m10-12-5-5m5 5-5 5" />,
+    download: <path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5" />,
+    upload: <path d="M12 16V4m-5 5 5-5 5 5M4 16v5h16v-5" />,
+    save: <><path d="M5 3h12l4 4v14H3V3zM7 3v6h10V3M7 21v-8h10v8" /></>,
+    square: <rect x="4" y="4" width="16" height="16" rx="2" />,
+    circle: <circle cx="12" cy="12" r="8" />,
+    lock: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V6a4 4 0 0 1 8 0v4" /></>,
+    unlock: <><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V6a4 4 0 0 1 7-2" /></>,
+    eye: <><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12" /><circle cx="12" cy="12" r="3" /></>,
+    hidden: <><path d="m3 3 18 18M9 5a14 14 0 0 1 13 7l-3 4M6 6l-4 6s4 7 10 7l4-1" /></>,
+    trash: <path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" />,
+    duplicate: <><rect x="8" y="8" width="13" height="13" rx="2" /><path d="M16 8V3H3v13h5" /></>,
+    up: <path d="m6 11 6-6 6 6M12 5v15" />,
+    down: <path d="m6 13 6 6 6-6M12 4v15" />,
+    expand: <path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5" />,
+    check: <path d="m5 12 4 4L19 6" />,
+    chevron: <path d="m6 9 6 6 6-6" />,
+    close: <path d="m6 6 12 12M18 6 6 18" />,
+    theme: <path d="M20.5 13A8.5 8.5 0 0 1 11 3.5 8.5 8.5 0 1 0 20.5 13Z" />,
+    settings: <><path d="M4 6h5m5 0h6M4 12h9m5 0h2M4 18h2m5 0h9" /><circle cx="11.5" cy="6" r="2.5" /><circle cx="15.5" cy="12" r="2.5" /><circle cx="8.5" cy="18" r="2.5" /></>,
+    hand: <path d="M8 13V6a2 2 0 0 1 4 0v6-8a2 2 0 0 1 4 0v8-6a2 2 0 0 1 4 0v10c0 4-2 6-6 6h-2c-2 0-3-1-4-3l-4-6a2 2 0 0 1 3-2l3 3" />,
+    keyboard: <><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M7 15h10" /></>,
+    device: <><rect x="3" y="3" width="18" height="13" rx="2" /><path d="M8 21h8M12 16v5" /></>,
+    search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></>,
+  };
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name] ?? paths.logo}</svg>;
+}
