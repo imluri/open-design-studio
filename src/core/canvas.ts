@@ -95,7 +95,7 @@ export async function pageObjects(page: DesignPage, editable: boolean): Promise<
         lockMovementX: element.locked, lockMovementY: element.locked,
         lockScalingX: element.locked, lockScalingY: element.locked, lockRotation: element.locked,
         lockScalingFlip: true, strokeWidth: 0, padding: 5,
-        cornerColor: '#6656db', borderColor: '#6656db', cornerStrokeColor: '#ffffff',
+        cornerColor: '#c78324', borderColor: '#c78324', cornerStrokeColor: '#ffffff',
         transparentCorners: false, cornerStyle: 'circle' as const,
       };
       let object: LayerObject;

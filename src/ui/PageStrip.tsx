@@ -167,7 +167,7 @@ function FilmstripActions({ props, retry }: { props: SlideProps; retry?: () => v
     if (!open || !menu.current || !summary.current) return;
     const panel = menu.current, anchor = summary.current;
     const theme = getComputedStyle(anchor);
-    for (const property of ['--ms-bg', '--ms-ink', '--ms-muted', '--ms-border', '--ms-accent', '--portal-surface', '--portal-inset', '--portal-control-hover', '--portal-danger-bg', '--portal-err', '--portal-link']) {
+    for (const property of ['--ms-bg', '--ms-ink', '--ms-muted', '--ms-border', '--ms-accent', '--studio-surface', '--studio-inset', '--studio-control-hover', '--studio-danger-bg', '--studio-err', '--studio-link']) {
       const value = theme.getPropertyValue(property).trim();
       if (value) panel.style.setProperty(property, value);
     }
